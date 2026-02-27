@@ -4,6 +4,11 @@ import starlight from '@astrojs/starlight';
 import mermaid from 'astro-mermaid';
 
 export default defineConfig({
+  vite: {
+    preview: {
+      allowedHosts: ['docs.weelet.io'],
+    },
+  },
   integrations: [
     mermaid(),
     starlight({
