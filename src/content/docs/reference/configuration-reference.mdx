@@ -1,0 +1,144 @@
+---
+title: Configuration Reference
+description: Complete reference for all AgentLoop configuration fields, types, defaults, and environment overrides.
+---
+
+## Server
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `server.socket_path` | `string` | `~/.local/share/agentloop/agentloop.sock` | Unix socket path |
+
+## Pi
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `pi.binary` | `string` | `pi` | Path to pi binary |
+| `pi.provider` | `string` | `anthropic` | LLM provider name |
+| `pi.model` | `string` | `claude-sonnet-4-20250514` | Model identifier |
+| `pi.extensions_dir` | `string` | `""` (auto-detect) | Directory containing pi extensions |
+| `pi.extra_args` | `[]string` | `[]` | Additional CLI arguments for pi |
+
+## Vault
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `vault.path` | `string` | `~/.local/share/agentloop/vault` | Vault storage directory |
+
+## Memory
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `memory.max_profile_entries` | `int` | `50` | Max entries in profile lists (projects, topics) |
+| `memory.conversation_retain_days` | `int` | `30` | Days to keep conversation logs |
+| `memory.compaction_threshold` | `int` | `40` | Entries before compaction triggers |
+| `memory.compaction_strategy` | `string` | `rolling` | Strategy: `rolling`, `facts`, or `topics` |
+| `memory.max_context_tokens` | `int` | `3000` | Max tokens in assembled memory context |
+| `memory.prompt_cache_ttl_minutes` | `int` | `60` | Configured cache TTL (actual in-code TTL is 5 min) |
+
+## Sessions
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `sessions.max_concurrent` | `int` | `3` | Max total active sessions across all users |
+| `sessions.max_per_user` | `int` | `1` | Max active sessions per user |
+| `sessions.timeout_minutes` | `int` | `30` | Session timeout in minutes |
+| `sessions.max_token_budget` | `int` | `200000` | Max tokens per session |
+| `sessions.max_tool_calls` | `int` | `100` | Max tool calls per session |
+| `sessions.stuck_threshold` | `int` | `3` | Consecutive errors before stuck detection |
+
+## HITL
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `hitl.always_pause_tools` | `[]string` | `[docker, git push, rm -r, curl, wget]` | Tools that always require approval |
+| `hitl.timeout_seconds` | `int` | `300` | Seconds before auto-decision |
+| `hitl.timeout_action` | `string` | `deny` | Action on timeout: `deny` or `approve` |
+
+## Security
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `security.allowed_paths` | `[]string` | `[~/projects, ~/tmp, ~/agentloop-sandbox]` | Paths the agent can access |
+| `security.blocked_env_prefixes` | `[]string` | See below | Env var prefixes stripped from pi subprocess |
+| `security.blocked_cidrs` | `[]string` | See below | CIDRs blocked for SSRF protection |
+| `security.docker_allowed_subcommands` | `[]string` | See below | Allowed docker subcommands |
+| `security.docker_blocked_volume_paths` | `[]string` | `[/etc, /var, /root, /proc, /sys, /dev]` | Blocked docker volume mount paths |
+
+**Default `blocked_env_prefixes`:**
+`ANTHROPIC_`, `OPENAI_`, `BRAVE_SEARCH_`, `N8N_WEBHOOK_`, `AWS_SECRET`, `GITHUB_TOKEN`, `SECRET_KEY`, `PRIVATE_KEY`
+
+**Default `blocked_cidrs`:**
+`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `127.0.0.0/8`, `169.254.0.0/16`, `fc00::/7`, `::1/128`, `fe80::/10`
+
+**Default `docker_allowed_subcommands`:**
+`ps`, `logs`, `images`, `build`, `compose`, `inspect`, `stats`, `top`, `exec`, `run`, `stop`, `start`, `restart`, `rm`
+
+## Skills
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `skills.skill_dirs` | `[]string` | `[~/.local/share/agentloop/vault/skills]` | Directories to scan for skills |
+
+## Logging
+
+| YAML Path | Go Type | Default | Description |
+|-----------|---------|---------|-------------|
+| `logging.level` | `string` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `logging.file` | `string` | `""` | Log file path (empty = stderr only) |
+
+## Environment Variable Overrides
+
+Format: `AGENTLOOP_SECTION_FIELD` (uppercase, underscores)
+
+Examples:
+```bash
+AGENTLOOP_SERVER_SOCKET_PATH=/tmp/agentloop.sock
+AGENTLOOP_PI_PROVIDER=openai
+AGENTLOOP_SESSIONS_MAX_CONCURRENT=5
+AGENTLOOP_LOGGING_LEVEL=debug
+```
+
+## Full Default YAML
+
+```yaml
+server:
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+pi:
+  binary: pi
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  extensions_dir: ""
+  extra_args: []
+vault:
+  path: ~/.local/share/agentloop/vault
+memory:
+  max_profile_entries: 50
+  conversation_retain_days: 30
+  compaction_threshold: 40
+  compaction_strategy: rolling
+  max_context_tokens: 3000
+  prompt_cache_ttl_minutes: 60
+sessions:
+  max_concurrent: 3
+  max_per_user: 1
+  timeout_minutes: 30
+  max_token_budget: 200000
+  max_tool_calls: 100
+  stuck_threshold: 3
+hitl:
+  always_pause_tools: [docker, git push, rm -r, curl, wget]
+  timeout_seconds: 300
+  timeout_action: deny
+security:
+  allowed_paths: [~/projects, ~/tmp, ~/agentloop-sandbox]
+  blocked_env_prefixes: [ANTHROPIC_, OPENAI_, BRAVE_SEARCH_, N8N_WEBHOOK_, AWS_SECRET, GITHUB_TOKEN, SECRET_KEY, PRIVATE_KEY]
+  blocked_cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16, "fc00::/7", "::1/128", "fe80::/10"]
+  docker_allowed_subcommands: [ps, logs, images, build, compose, inspect, stats, top, exec, run, stop, start, restart, rm]
+  docker_blocked_volume_paths: [/etc, /var, /root, /proc, /sys, /dev]
+skills:
+  skill_dirs: [~/.local/share/agentloop/vault/skills]
+logging:
+  level: info
+  file: ""
+```

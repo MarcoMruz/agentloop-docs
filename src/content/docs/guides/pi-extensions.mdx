@@ -1,0 +1,145 @@
+---
+title: Pi Extensions
+description: Write TypeScript extensions that intercept tool calls or add new tools to the pi coding agent.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## What Are Extensions?
+
+Extensions are TypeScript modules loaded into the pi subprocess that can:
+- **Intercept tool calls** — Block, modify, or log tool execution
+- **Add new tools** — Register custom tools the agent can use
+- **Request HITL approval** — Trigger human approval for specific operations
+
+Extensions run inside the pi Node.js subprocess, not the Go server.
+
+## Extension Factory Pattern
+
+Every extension exports a default factory function:
+
+```typescript
+import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+
+const ext: ExtensionFactory = (pi) => {
+  // Register hooks and tools here
+};
+
+export default ext;
+```
+
+## Intercepting Tool Calls
+
+Use `pi.on("toolCall", handler)` to intercept tool calls before they execute:
+
+```typescript
+const ext: ExtensionFactory = (pi) => {
+  pi.on("toolCall", (ctx) => {
+    // Inspect the tool call
+    console.error(`Tool: ${ctx.tool.name}, Input: ${JSON.stringify(ctx.tool.input)}`);
+
+    // Allow it to proceed
+    return { action: "continue" };
+
+    // Or block it
+    // return { action: "block", message: "Not allowed" };
+  });
+};
+```
+
+The handler receives a context object with:
+- `ctx.tool.name` — Tool name (e.g., `bash`, `edit`, `write`)
+- `ctx.tool.input` — Tool input parameters
+
+Return `{ action: "continue" }` to allow or `{ action: "block", message: "reason" }` to deny.
+
+## Adding Custom Tools
+
+Register new tools the agent can use:
+
+```typescript
+const ext: ExtensionFactory = (pi) => {
+  pi.addTool({
+    name: "timestamp",
+    description: "Returns the current UTC timestamp",
+    parameters: {},
+    execute: (input) => {
+      return new Date().toISOString();
+    },
+  });
+};
+```
+
+## HITL from Extensions
+
+Request human approval for specific operations:
+
+```typescript
+pi.on("toolCall", async (ctx) => {
+  if (ctx.tool.name === "bash" && ctx.tool.input.command?.includes("rm")) {
+    const approved = await ctx.ui.confirm(
+      "Destructive Operation",
+      `Command: ${ctx.tool.input.command}`
+    );
+    if (!approved) {
+      return { action: "block", message: "User denied the operation" };
+    }
+  }
+  return { action: "continue" };
+});
+```
+
+`ctx.ui.confirm(title, details)` returns a `Promise<boolean>` — it sends an `extension_ui_request` through the AgentLoop HITL flow and waits for the user's decision.
+
+## Environment Variables
+
+The Go server sets `AGENTLOOP_*` environment variables before spawning pi. Extensions read these with `process.env`:
+
+```typescript
+const allowedPaths = (process.env.AGENTLOOP_ALLOWED_PATHS || "").split(",");
+```
+
+| Variable | Used By | Format |
+|----------|---------|--------|
+| `AGENTLOOP_ALLOWED_PATHS` | security-policy.ts | Comma-separated paths |
+| `AGENTLOOP_DOCKER_ALLOWED` | docker-guard.ts | Comma-separated subcommands |
+| `AGENTLOOP_DOCKER_BLOCKED_VOLS` | docker-guard.ts | Comma-separated paths |
+
+Follow the `AGENTLOOP_*` naming convention for any new extension config.
+
+## Existing Extensions
+
+### security-policy.ts
+
+Blocks dangerous bash patterns and enforces file write path restrictions:
+
+- **Blocked commands:** `rm -rf /`, `sudo rm`, `mkfs`, `dd if=`, fork bombs
+- **Blocked env access:** `printenv`, `env |`, `echo $ANTHROPIC`, `echo $OPENAI`
+- **Path enforcement:** Write/edit operations checked against `AGENTLOOP_ALLOWED_PATHS`
+
+### docker-guard.ts
+
+Validates docker commands:
+
+- **Subcommand whitelist:** Only allowed subcommands can run (default: `ps,logs,images,build,compose,inspect,stats`)
+- **Volume mount check:** Blocks mounts to sensitive paths (`/etc`, `/var`, `/root`, `/proc`, `/sys`, `/dev`)
+
+## How to Test
+
+Run pi directly with your extension:
+
+```bash
+pi -e path/to/my-extension.ts "test task"
+```
+
+## Adding a New Extension
+
+1. Create `extensions/my-extension.ts`
+2. Implement the `ExtensionFactory` pattern
+3. Export default the factory
+4. Place it in the `extensions_dir` (or the default `extensions/` directory)
+5. Restart the server — extensions are auto-loaded on next session
+
+<Aside type="note">
+  Extensions cannot import from each other — each is loaded independently by pi. If you need shared utilities, duplicate them or create a separate npm package.
+</Aside>

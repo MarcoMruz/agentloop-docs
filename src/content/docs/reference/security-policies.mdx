@@ -1,0 +1,142 @@
+---
+title: Security Policies Reference
+description: Detailed reference for all security validators, blocked patterns, and enforcement mechanisms.
+---
+
+## Path Validation
+
+**Function:** `ValidatePath(path string, allowedPaths []string) error`
+
+**Location:** `internal/security/policy.go`
+
+1. Applies `filepath.Clean()` to canonicalize the path
+2. Expands `~/` to the user's home directory
+3. Checks that the cleaned path starts with one of `allowedPaths` (prefix match with path separator)
+4. Returns error if path contains `..` traversal after cleaning
+
+**Default `allowed_paths`:**
+```yaml
+- ~/projects
+- ~/tmp
+- ~/agentloop-sandbox
+```
+
+## URL Validation (SSRF Protection)
+
+**Function:** `ValidateURL(rawURL string, blockedCIDRs []string, allowedDomains []string) error`
+
+**Location:** `internal/security/policy.go`
+
+1. Requires `http` or `https` scheme
+2. If `allowedDomains` is configured, checks domain against whitelist (exact or suffix match)
+3. Resolves hostname via DNS to get IP addresses
+4. Checks all resolved IPs against `blockedCIDRs`
+5. Returns error on any match
+
+**Default `blocked_cidrs`:**
+
+| CIDR | Description |
+|------|-------------|
+| `10.0.0.0/8` | Private (Class A) |
+| `172.16.0.0/12` | Private (Class B) |
+| `192.168.0.0/16` | Private (Class C) |
+| `127.0.0.0/8` | Loopback |
+| `169.254.0.0/16` | Link-local |
+| `fc00::/7` | IPv6 Unique Local |
+| `::1/128` | IPv6 Loopback |
+| `fe80::/10` | IPv6 Link-local |
+
+## Docker Validation
+
+**Function:** `ValidateDockerCommand(cmd string, allowedSubs []string, blockedVolPaths []string) error`
+
+**Location:** `internal/security/policy.go`
+
+1. Parses bash command for `docker` or `docker-compose` invocations
+2. Extracts the subcommand
+3. Checks subcommand against `allowedSubs` whitelist
+4. Scans for volume mounts (`-v` or `--volume` flags)
+5. Checks mount source paths against `blockedVolPaths` (prefix match)
+6. Blocks `--privileged` and `--network host` flags
+
+**Default `docker_allowed_subcommands`:**
+```
+ps, logs, images, build, compose, inspect, stats, top, exec, run, stop, start, restart, rm
+```
+
+**Default `docker_blocked_volume_paths`:**
+```
+/etc, /var, /root, /proc, /sys, /dev
+```
+
+## Environment Sanitization
+
+**Function:** `buildSafeEnv()` in `internal/bridge/rpc.go`
+
+Strips environment variables matching blocked prefixes before spawning the pi subprocess.
+
+**Default `blocked_env_prefixes`:**
+
+| Prefix | Protects |
+|--------|----------|
+| `ANTHROPIC_` | Anthropic API keys |
+| `OPENAI_` | OpenAI API keys |
+| `BRAVE_SEARCH_` | Brave Search API keys |
+| `N8N_WEBHOOK_` | n8n webhook secrets |
+| `AWS_SECRET` | AWS secret access keys |
+| `GITHUB_TOKEN` | GitHub personal access tokens |
+| `SECRET_KEY` | Generic secrets |
+| `PRIVATE_KEY` | Generic private keys |
+
+## Extension-Level: Bash Pattern Blocking
+
+**Extension:** `security-policy.ts`
+
+Blocked patterns in bash commands:
+
+| Pattern | Reason |
+|---------|--------|
+| `rm -rf /` | Destructive root deletion |
+| `sudo rm` | Privileged destructive command |
+| `mkfs` | Filesystem formatting |
+| `> /dev/sd` | Direct disk write |
+| `dd if=` | Raw disk operation |
+| `:(){ :\|:& };:` | Fork bomb |
+
+## Extension-Level: Environment Exfiltration Blocking
+
+**Extension:** `security-policy.ts`
+
+Blocked exfiltration patterns:
+
+| Pattern | Reason |
+|---------|--------|
+| `printenv` | Dump all environment variables |
+| `env \|` | Pipe environment to another command |
+| `echo $ANTHROPIC` | Read Anthropic API key |
+| `echo $OPENAI` | Read OpenAI API key |
+| `cat /proc/*/environ` | Read process environment files |
+
+## Extension-Level: Write Path Enforcement
+
+**Extension:** `security-policy.ts`
+
+For `write` and `edit` tool calls:
+1. Reads `AGENTLOOP_ALLOWED_PATHS` from environment
+2. Resolves the target path to absolute
+3. Checks prefix match against allowed paths
+4. Blocks if path is outside allowed directories
+
+## Extension-Level: Docker Guard
+
+**Extension:** `docker-guard.ts`
+
+For bash commands containing `docker`:
+1. Reads `AGENTLOOP_DOCKER_ALLOWED` for allowed subcommands
+2. Reads `AGENTLOOP_DOCKER_BLOCKED_VOLS` for blocked volume paths
+3. Validates the subcommand and any `-v`/`--volume` mounts
+4. Blocks if subcommand is not in whitelist or volume mounts target blocked paths
+
+## Socket Permissions
+
+The Unix socket is created with `0700` permissions (owner-only read/write/execute). The server removes stale socket files on startup.

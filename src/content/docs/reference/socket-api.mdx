@@ -1,0 +1,231 @@
+---
+title: Socket API Reference
+description: Complete JSON-RPC 2.0 API reference for the AgentLoop Unix socket protocol.
+---
+
+## Protocol
+
+- **Transport:** Unix domain socket at `~/.local/share/agentloop/agentloop.sock`
+- **Protocol:** JSON-RPC 2.0
+- **Framing:** Single JSON object per line, terminated by `\n`
+- **Socket permissions:** `0700` (owner-only)
+
+## Client → Server (Requests)
+
+Requests include an `id` field. The server responds with a matching `id`.
+
+### `task.start`
+
+Start a new agent task.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `userId` | string | Yes | User identifier |
+| `text` | string | Yes | Task description |
+| `workDir` | string | No | Working directory for the task |
+| `source` | string | Yes | Client identifier (`"cli"`, `"slack"`, etc.) |
+
+**Result:** `{ sessionId: string, status: "started" }`
+
+**Example:**
+
+```json
+→ {"jsonrpc":"2.0","id":1,"method":"task.start","params":{"userId":"marco","text":"fix tests","workDir":"~/projects/myapp","source":"cli"}}
+← {"jsonrpc":"2.0","id":1,"result":{"sessionId":"sess-a1b2c3d4","status":"started"}}
+```
+
+### `task.steer`
+
+Redirect a running task.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sessionId` | string | Yes | Active session ID |
+| `text` | string | Yes | New direction for the agent |
+
+**Result:** `{ ok: true }`
+
+```json
+→ {"jsonrpc":"2.0","id":2,"method":"task.steer","params":{"sessionId":"sess-a1b2c3d4","text":"focus on auth tests only"}}
+← {"jsonrpc":"2.0","id":2,"result":{"ok":true}}
+```
+
+### `task.abort`
+
+Abort a running task.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sessionId` | string | Yes | Session to abort |
+
+**Result:** `{ ok: true }`
+
+```json
+→ {"jsonrpc":"2.0","id":3,"method":"task.abort","params":{"sessionId":"sess-a1b2c3d4"}}
+← {"jsonrpc":"2.0","id":3,"result":{"ok":true}}
+```
+
+### `hitl.respond`
+
+Respond to a HITL approval request.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sessionId` | string | Yes | Session with pending HITL |
+| `requestId` | string | Yes | HITL request identifier |
+| `decision` | string | Yes | `"approve"`, `"deny"`, or `"abort"` |
+
+**Result:** `{ ok: true }`
+
+```json
+→ {"jsonrpc":"2.0","id":4,"method":"hitl.respond","params":{"sessionId":"sess-a1b2c3d4","requestId":"hitl-req-1","decision":"approve"}}
+← {"jsonrpc":"2.0","id":4,"result":{"ok":true}}
+```
+
+### `session.list`
+
+List sessions.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `userId` | string | No | Filter by user |
+| `status` | string | No | Filter by state |
+
+**Result:** `SessionInfo[]`
+
+```json
+→ {"jsonrpc":"2.0","id":5,"method":"session.list","params":{"userId":"marco"}}
+← {"jsonrpc":"2.0","id":5,"result":[{"id":"sess-a1b2c3d4","userId":"marco","task":"fix tests","state":"running","source":"cli","start":"2026-02-27T14:00:00Z"}]}
+```
+
+### `memory.get`
+
+Get a user's memory context.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `userId` | string | Yes | User identifier |
+
+**Result:** `{ context: string }`
+
+```json
+→ {"jsonrpc":"2.0","id":6,"method":"memory.get","params":{"userId":"marco"}}
+← {"jsonrpc":"2.0","id":6,"result":{"context":"User: marco\nCommunication style: concise, technical\n..."}}
+```
+
+### `memory.update`
+
+Update a user fact.
+
+**Params:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `userId` | string | Yes | User identifier |
+| `key` | string | Yes | Fact key |
+| `value` | string | Yes | Fact value |
+
+**Result:** `{ ok: true }`
+
+```json
+→ {"jsonrpc":"2.0","id":7,"method":"memory.update","params":{"userId":"marco","key":"timezone","value":"Europe/Bratislava"}}
+← {"jsonrpc":"2.0","id":7,"result":{"ok":true}}
+```
+
+### `health.check`
+
+Server health check.
+
+**Params:** `{}`
+
+**Result:** `{ status: "ok", activeSessions: number }`
+
+```json
+→ {"jsonrpc":"2.0","id":8,"method":"health.check","params":{}}
+← {"jsonrpc":"2.0","id":8,"result":{"status":"ok","activeSessions":2}}
+```
+
+## Server → Client (Notifications)
+
+Notifications have a `method` field but **no `id`** field. Clients cannot respond to them.
+
+### `event.text`
+
+Agent text output chunk.
+
+```json
+{"jsonrpc":"2.0","method":"event.text","params":{"sessionId":"sess-a1b2c3d4","content":"Looking at the test files..."}}
+```
+
+### `event.tool_use`
+
+Tool about to execute.
+
+```json
+{"jsonrpc":"2.0","method":"event.tool_use","params":{"sessionId":"sess-a1b2c3d4","toolName":"bash","input":{"command":"go test ./..."}}}
+```
+
+### `event.tool_result`
+
+Tool execution result.
+
+```json
+{"jsonrpc":"2.0","method":"event.tool_result","params":{"sessionId":"sess-a1b2c3d4","toolName":"bash","output":"PASS\nok  \tgithub.com/user/agentloop/internal/security\t0.023s","success":true}}
+```
+
+### `event.hitl_request`
+
+HITL approval needed.
+
+```json
+{"jsonrpc":"2.0","method":"event.hitl_request","params":{"sessionId":"sess-a1b2c3d4","requestId":"hitl-req-1","toolName":"bash","details":"docker run -v ~/project:/app ubuntu","options":["approve","deny","abort"]}}
+```
+
+### `event.done`
+
+Task completed.
+
+```json
+{"jsonrpc":"2.0","method":"event.done","params":{"sessionId":"sess-a1b2c3d4","output":"Fixed 2 failing tests in user_test.go","stats":{"tokens":3200,"toolCalls":5,"duration":"12.5s"}}}
+```
+
+### `event.error`
+
+Task error.
+
+```json
+{"jsonrpc":"2.0","method":"event.error","params":{"sessionId":"sess-a1b2c3d4","message":"pi subprocess exited with code 1"}}
+```
+
+### `event.session_saved`
+
+Session persisted to vault.
+
+```json
+{"jsonrpc":"2.0","method":"event.session_saved","params":{"sessionId":"sess-a1b2c3d4"}}
+```
+
+## Error Responses
+
+```json
+{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"method not found"}}
+```
+
+| Code | Meaning |
+|------|---------|
+| `-32700` | Parse error — invalid JSON |
+| `-32601` | Method not found |
+| `-32602` | Invalid params |
+| `-32000` | Application error (server-side) |

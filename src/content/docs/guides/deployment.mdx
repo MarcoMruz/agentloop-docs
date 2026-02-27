@@ -1,0 +1,179 @@
+---
+title: Deployment
+description: Deploy AgentLoop server and Slack Bridge with PM2 or systemd.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Build
+
+### AgentLoop Server
+
+```bash
+cd ~/development/agentloop
+go build -ldflags="-X main.version=v1.0.0" -o agentloop-server ./cmd/agentloop-server
+go build -o agentloop ./cmd/agentloop
+```
+
+### Slack Bridge
+
+```bash
+cd ~/development/agentloop-slack
+npm install
+npm run build
+```
+
+## Deployment
+
+<Tabs>
+  <TabItem label="PM2">
+
+### ecosystem.config.cjs
+
+```javascript
+module.exports = {
+  apps: [
+    {
+      name: "agentloop-server",
+      script: "./agentloop-server",
+      autorestart: true,
+      exp_backoff_restart_delay: 1000,
+    },
+    {
+      name: "agentloop-slack",
+      script: "dist/index.js",
+      cwd: "/Users/you/development/agentloop-slack",
+      autorestart: true,
+      exp_backoff_restart_delay: 1000,
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+  ],
+};
+```
+
+### Start
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 save && pm2 startup
+```
+
+### Manage
+
+```bash
+# Check status
+pm2 status
+
+# View logs
+pm2 logs agentloop-server
+pm2 logs agentloop-slack
+
+# Restart after changes
+pm2 restart agentloop-server
+npm run build && pm2 restart agentloop-slack
+```
+
+  </TabItem>
+  <TabItem label="systemd">
+
+### AgentLoop Server Unit
+
+Create `/etc/systemd/system/agentloop-server.service`:
+
+```ini
+[Unit]
+Description=AgentLoop Server
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+ExecStart=/home/your-username/agentloop/agentloop-server
+Restart=always
+RestartSec=5
+Environment=ANTHROPIC_API_KEY=sk-ant-...
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Slack Bridge Unit
+
+Create `/etc/systemd/system/agentloop-slack.service`:
+
+```ini
+[Unit]
+Description=AgentLoop Slack Bridge
+After=agentloop-server.service
+Requires=agentloop-server.service
+
+[Service]
+Type=simple
+User=your-username
+WorkingDirectory=/home/your-username/agentloop-slack
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+EnvironmentFile=/home/your-username/agentloop-slack/.env
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Enable and Start
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable agentloop-server agentloop-slack
+sudo systemctl start agentloop-server
+sudo systemctl start agentloop-slack
+```
+
+### Manage
+
+```bash
+# Check status
+systemctl status agentloop-server
+systemctl status agentloop-slack
+
+# View logs
+journalctl -u agentloop-server -f
+journalctl -u agentloop-slack -f
+
+# Restart
+sudo systemctl restart agentloop-server
+sudo systemctl restart agentloop-slack
+```
+
+  </TabItem>
+</Tabs>
+
+## Health Check Verification
+
+After deployment, verify both services are running:
+
+```bash
+# Server health check
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+Expected:
+```json
+{"jsonrpc":"2.0","id":1,"result":{"status":"ok","activeSessions":0}}
+```
+
+For the Slack Bridge, send a DM to your bot in Slack.
+
+## Log Locations
+
+| Component | PM2 | systemd |
+|-----------|-----|---------|
+| AgentLoop Server | `pm2 logs agentloop-server` | `journalctl -u agentloop-server` |
+| Slack Bridge | `pm2 logs agentloop-slack` | `journalctl -u agentloop-slack` |
+| Pi subprocess | stderr captured by server logs | stderr captured by server logs |
+
+<Aside type="caution">
+  The Slack Bridge depends on the AgentLoop server. Always start the server first. With PM2, use `wait_ready` and `listen_timeout` to ensure the server is ready before the bridge connects. With systemd, use `After=` and `Requires=` dependencies.
+</Aside>

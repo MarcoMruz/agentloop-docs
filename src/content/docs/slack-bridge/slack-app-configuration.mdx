@@ -1,0 +1,90 @@
+---
+title: Slack App Configuration
+description: Step-by-step guide to configuring your Slack app in the API Dashboard.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Step 1: Create the App
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps)
+2. Click **Create New App** → **From scratch**
+3. Name: `AgentLoop` (or your preferred name)
+4. Select your workspace
+5. Click **Create App**
+
+## Step 2: Enable Socket Mode
+
+1. Go to **Socket Mode** in the left sidebar
+2. Toggle **Enable Socket Mode** → ON
+3. Click **Generate Token**
+4. Name: `agentloop-socket` (or any name)
+5. Add scope: `connections:write`
+6. Click **Generate**
+7. Copy the token — this is your `SLACK_APP_TOKEN` (starts with `xapp-`)
+
+## Step 3: Add Bot Token Scopes
+
+1. Go to **OAuth & Permissions** in the left sidebar
+2. Scroll to **Scopes** → **Bot Token Scopes**
+3. Add these scopes:
+
+| Scope | Purpose |
+|-------|---------|
+| `app_mentions:read` | Receive @mention events |
+| `chat:write` | Send messages and replies |
+| `commands` | Handle slash commands |
+| `im:history` | Read DM history |
+| `im:read` | Read DM metadata |
+| `im:write` | Open DM conversations |
+| `files:write` | Upload files (long outputs) |
+| `reactions:write` | Add emoji reactions |
+| `users:read` | Read user profiles |
+
+## Step 4: Enable Event Subscriptions
+
+1. Go to **Event Subscriptions** in the left sidebar
+2. Toggle **Enable Events** → ON
+3. Under **Subscribe to bot events**, add:
+   - `app_mention` — When someone @mentions the bot
+   - `message.im` — When someone DMs the bot
+4. Click **Save Changes**
+
+## Step 5: Create Slash Commands
+
+1. Go to **Slash Commands** in the left sidebar
+2. Create each command:
+
+| Command | Description | Usage Hint |
+|---------|-------------|------------|
+| `/weather` | Get current weather | `[city]` |
+| `/calendar` | Check calendar | `[query]` |
+| `/task` | Start an agent task | `[in ~/path] description` |
+| `/sessions` | List active sessions | |
+| `/abort` | Abort running session | |
+
+## Step 6: Enable Interactivity
+
+1. Go to **Interactivity & Shortcuts** in the left sidebar
+2. Toggle **Interactivity** → ON
+3. Click **Save Changes**
+
+This is required for Block Kit button actions (HITL approval buttons).
+
+## Step 7: Install to Workspace
+
+1. Go to **Install App** in the left sidebar
+2. Click **Install to Workspace**
+3. Review and **Allow**
+4. Copy the **Bot User OAuth Token** — this is your `SLACK_BOT_TOKEN` (starts with `xoxb-`)
+
+## Token Checklist
+
+| Token | Starts With | Where It Goes | How to Get It |
+|-------|-------------|---------------|---------------|
+| Bot Token | `xoxb-` | `SLACK_BOT_TOKEN` in `.env` | OAuth & Permissions → Install App |
+| App Token | `xapp-` | `SLACK_APP_TOKEN` in `.env` | Socket Mode → Generate Token |
+
+<Aside type="caution">
+  Keep your tokens secret. Never commit them to version control. Use `.env` files (which should be in `.gitignore`).
+</Aside>

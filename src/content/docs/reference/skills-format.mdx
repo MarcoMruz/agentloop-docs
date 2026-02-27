@@ -1,0 +1,124 @@
+---
+title: Skills Format Reference
+description: Complete specification for SKILL.md files, trigger matching, and the skills registry.
+---
+
+## File Location
+
+```
+`vault_path/skills/skill-name/SKILL.md`
+```
+
+Default vault path: `~/.local/share/agentloop/vault`
+
+Example: `~/.local/share/agentloop/vault/skills/git-helper/SKILL.md`
+
+## SKILL.md Format
+
+```markdown
+---
+name: skill-name
+description: Optional human-readable description
+triggers:
+  - keyword1
+  - keyword2
+  - multi word trigger
+---
+
+# Skill Title
+
+Markdown instructions that will be injected into the agent prompt.
+
+Use any markdown: headings, lists, code blocks, etc.
+```
+
+## Frontmatter Schema
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `name` | string | No | Directory name | Unique skill identifier |
+| `description` | string | No | `""` | Human-readable description |
+| `triggers` | string[] | Yes (for auto-detection) | — | Keywords that activate the skill |
+
+## Parsing Algorithm
+
+1. Read `SKILL.md` file content
+2. Split on `---` delimiters (YAML frontmatter boundary)
+3. YAML unmarshal the frontmatter section
+4. Trim whitespace from the body (everything after second `---`)
+5. If `name` is empty in frontmatter, use the directory name as fallback
+
+## Trigger Matching
+
+For each skill in the registry, for each trigger keyword:
+
+```go
+strings.Contains(strings.ToLower(taskText), strings.ToLower(trigger))
+```
+
+- **Case-insensitive** substring match
+- If **any** trigger matches, the skill activates
+- **Multiple skills** can match the same task
+- Matching runs in `PromptBuilder.DetectSkills()`
+
+## Prompt Injection
+
+When a skill matches, its instructions are wrapped in a `<skill>` XML tag and inserted into the prompt:
+
+```xml
+<skill name="git-helper">
+# Git Helper
+
+When working with Git, follow these conventions:
+- Use conventional commits...
+</skill>
+```
+
+The `<skill>` block is placed between the `<memory>` block and the task text.
+
+## Skills Registry
+
+### Loading
+
+Skills are loaded on server startup from all directories in `skills.skill_dirs` config:
+
+```go
+// Registry.LoadAll() scans each skill dir for {name}/SKILL.md
+func (r *Registry) LoadAll() error
+```
+
+### Detection
+
+```go
+// DetectSkills matches task text against all registered triggers
+func (pb *PromptBuilder) DetectSkills(taskText string) []Skill
+```
+
+### Skill Struct
+
+```go
+type Skill struct {
+    Name         string   // Unique identifier
+    Description  string   // Human-readable
+    Triggers     []string // Keywords for auto-activation
+    Instructions string   // Markdown body from SKILL.md
+}
+```
+
+## Configuration
+
+```yaml
+skills:
+  skill_dirs:
+    - ~/.local/share/agentloop/vault/skills
+    - ~/my-team-skills
+```
+
+Multiple directories can be configured. All are scanned on startup.
+
+## Best Practices
+
+- Use specific trigger words to avoid false matches
+- Keep instructions focused — don't duplicate general knowledge the LLM already has
+- Test triggers with `./agentloop "task containing trigger word"`
+- Restart the server after adding or modifying skills

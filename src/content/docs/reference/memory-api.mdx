@@ -1,0 +1,181 @@
+---
+title: Memory API Reference
+description: JSON-RPC methods, Go engine API, UserProfile schema, and compaction algorithms.
+---
+
+## JSON-RPC Methods
+
+### `memory.get`
+
+Get the assembled memory context for a user.
+
+**Params:** `{ userId: string }`
+
+**Result:** `{ context: string }`
+
+The returned context is the fully assembled prompt prefix including profile and relevant history.
+
+### `memory.update`
+
+Set or update a user fact in the profile's fact sheet.
+
+**Params:** `{ userId: string, key: string, value: string }`
+
+**Result:** `{ ok: true }`
+
+**Side effects:** Invalidates the prompt cache for this user.
+
+### `memory.forget`
+
+Remove a user fact from the profile's fact sheet.
+
+**Params:** `{ userId: string, key: string }`
+
+**Result:** `{ ok: true }`
+
+**Side effects:** Invalidates the prompt cache for this user.
+
+## Go Engine Public Methods
+
+### `GetContextForUser(userId string) (string, error)`
+
+Assembles full memory context from profile and last 30 conversation entries.
+
+1. Check prompt cache → return if hit
+2. Load user profile from `ProfileStore`
+3. Load recent conversation entries from `ConversationStore`
+4. Compact if over threshold
+5. Assemble context string
+6. Cache with 5-minute TTL
+7. Return
+
+### `GetContextForUserWithTask(userId, task string) (string, error)`
+
+Task-aware context assembly using indexed search:
+
+1. Extract keywords and topics from task text
+2. Score each conversation entry by keyword overlap (Jaccard similarity) + topic bonus (+0.2)
+3. Return top 8 matching entries, or 5 most recent if no matches found
+
+### `RecordInteraction(userId, role, content string) error`
+
+Save a conversation turn and update the user profile.
+
+**Side effects:**
+- Appends entry to today's conversation log
+- Updates conversation index (keywords, topics, summary)
+- Runs heuristic profile updates (project paths, topics, tool usage)
+- Invalidates prompt cache
+
+### `UpdateUserFact(userId, key, value string) error`
+
+Set a fact in the user's profile fact sheet.
+
+**Side effects:** Invalidates prompt cache.
+
+### `ForgetUserFact(userId, key string) error`
+
+Remove a fact from the user's profile fact sheet.
+
+**Side effects:** Invalidates prompt cache.
+
+## UserProfile Schema
+
+Stored as YAML in `vault/memory/users/<userId>.yaml`:
+
+```go
+type UserProfile struct {
+    UserID             string            `yaml:"userid"`
+    Name               string            `yaml:"name"`
+    CommunicationStyle string            `yaml:"communicationstyle"`
+    Preferences        map[string]string `yaml:"preferences"`
+    FrequentProjects   []string          `yaml:"frequentprojects"`
+    ToolPreferences    []string          `yaml:"toolpreferences"`
+    FactSheet          map[string]string `yaml:"factsheet"`
+    RecentTopics       []string          `yaml:"recenttopics"`
+    LastUpdated        string            `yaml:"lastupdated"`
+}
+```
+
+| Field | Type | Max Size | Description |
+|-------|------|----------|-------------|
+| `UserID` | string | — | User identifier |
+| `Name` | string | — | Display name |
+| `CommunicationStyle` | string | — | Default: `"concise, technical"` |
+| `Preferences` | map[string]string | — | Key-value preferences |
+| `FrequentProjects` | []string | 10 | Most recently used project paths |
+| `ToolPreferences` | []string | — | Tools the user commonly uses |
+| `FactSheet` | map[string]string | — | Explicit user facts (set via `memory.update`) |
+| `RecentTopics` | []string | 20 | Most recent conversation topics |
+| `LastUpdated` | string | — | RFC3339 timestamp |
+
+## Conversation Log Format
+
+**File:** `vault/memory/contexts/<userId>-YYYY-MM-DD.md`
+
+```markdown
+### 14:00:00 [user]
+Fix the failing tests in user.go
+
+### 14:00:05 [assistant]
+I'll look at the test files and identify the failures...
+```
+
+**Index sidecar:** `vault/memory/contexts/<userId>-YYYY-MM-DD.idx.json`
+
+```json
+[
+  {
+    "ts": "14:00:00",
+    "role": "user",
+    "keywords": ["failing", "tests", "user"],
+    "topics": ["test"],
+    "summary": "Fix the failing tests in user.go"
+  }
+]
+```
+
+- Up to 15 keywords per entry (4+ char words, 90+ stopwords filtered)
+- Summary: first 120 chars from first non-header line
+
+## Compaction Algorithms
+
+### Rolling (default)
+
+```
+If entries > compaction_threshold:
+  1. Take entries[:-5] (all but last 5)
+  2. Summarize each as "- {first 80 chars}"
+  3. Prefix: "Recent conversation (summarized):"
+  4. Append last 5 entries verbatim
+```
+
+### Facts
+
+```
+If entries > compaction_threshold:
+  1. Scan all entries for action keywords:
+     decided, created, fixed, deployed, configured,
+     implemented, updated, removed, added, changed
+  2. Keep only entries containing these keywords
+  3. Format: "Key decisions and actions:"
+  4. "- {matching line}"
+```
+
+### Topics
+
+```
+If entries > compaction_threshold:
+  1. For each entry, determine its topic(s)
+  2. Keep only the most recent entry per unique topic
+  3. Format: "Conversation by topic:"
+  4. Group entries under topic headers
+```
+
+## Prompt Cache
+
+- **Storage:** In-memory (not persisted)
+- **Key format:** `ctx:<userId>` or `ctx:<userId>:<taskCacheKey>`
+- **TTL:** 5 minutes (hardcoded)
+- **Invalidation triggers:** `RecordInteraction()`, `UpdateUserFact()`, `ForgetUserFact()`
+- **Task cache key:** Normalized task text, max 32 chars, special chars replaced with `-`

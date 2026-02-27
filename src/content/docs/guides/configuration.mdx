@@ -1,0 +1,187 @@
+---
+title: Configuration
+description: Complete guide to configuring AgentLoop — all settings, environment overrides, and common configurations.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Config File Location
+
+```
+~/.config/agentloop/agentloop.yaml
+```
+
+If the config file doesn't exist, AgentLoop starts with built-in defaults. No config file is required.
+
+## Full Annotated Example
+
+```yaml
+# Server settings
+server:
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+
+# Pi coding agent settings
+pi:
+  binary: pi                              # Path to pi binary (or just "pi" if on PATH)
+  provider: anthropic                     # LLM provider
+  model: claude-sonnet-4-20250514         # Model identifier
+  extensions_dir: ""                      # Auto-detected if empty
+  extra_args: []                          # Additional pi CLI arguments
+
+# Vault storage
+vault:
+  path: ~/.local/share/agentloop/vault
+
+# Memory settings
+memory:
+  max_profile_entries: 50                 # Max entries in profile lists
+  conversation_retain_days: 30            # Days to keep conversation logs
+  compaction_threshold: 40                # Entries before compaction triggers
+  compaction_strategy: rolling            # rolling | facts | topics
+  max_context_tokens: 3000               # Max tokens in memory context
+  prompt_cache_ttl_minutes: 60            # Cache TTL for assembled contexts
+
+# Session settings
+sessions:
+  max_concurrent: 3                       # Max total active sessions
+  max_per_user: 1                         # Max sessions per user
+  timeout_minutes: 30                     # Session timeout
+  max_token_budget: 200000                # Max tokens per session
+  max_tool_calls: 100                     # Max tool calls per session
+  stuck_threshold: 3                      # Consecutive errors = stuck
+
+# Human-in-the-loop settings
+hitl:
+  always_pause_tools:                     # Tools that always require approval
+    - docker
+    - git push
+    - rm -r
+    - curl
+    - wget
+  timeout_seconds: 300                    # HITL request timeout
+  timeout_action: deny                    # Action on timeout: deny | approve
+
+# Security settings
+security:
+  allowed_paths:                          # Paths the agent can access
+    - ~/projects
+    - ~/tmp
+    - ~/agentloop-sandbox
+  blocked_env_prefixes:                   # Env vars stripped from pi subprocess
+    - ANTHROPIC_
+    - OPENAI_
+    - BRAVE_SEARCH_
+    - N8N_WEBHOOK_
+    - AWS_SECRET
+    - GITHUB_TOKEN
+    - SECRET_KEY
+    - PRIVATE_KEY
+  blocked_cidrs:                          # CIDRs blocked for SSRF protection
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.0/8
+    - 169.254.0.0/16
+    - "fc00::/7"
+    - "::1/128"
+    - "fe80::/10"
+  docker_allowed_subcommands:
+    - ps
+    - logs
+    - images
+    - build
+    - compose
+    - inspect
+    - stats
+    - top
+    - exec
+    - run
+    - stop
+    - start
+    - restart
+    - rm
+  docker_blocked_volume_paths:
+    - /etc
+    - /var
+    - /root
+    - /proc
+    - /sys
+    - /dev
+
+# Skills settings
+skills:
+  skill_dirs:
+    - ~/.local/share/agentloop/vault/skills
+
+# Logging settings
+logging:
+  level: info                             # debug | info | warn | error
+  file: ""                                # Log file path (empty = stderr only)
+```
+
+## Environment Variable Overrides
+
+All config fields can be overridden with environment variables using the `AGENTLOOP_` prefix:
+
+```bash
+export AGENTLOOP_SERVER_SOCKET_PATH=/tmp/agentloop.sock
+export AGENTLOOP_PI_PROVIDER=openai
+export AGENTLOOP_PI_MODEL=gpt-4
+export AGENTLOOP_SESSIONS_MAX_CONCURRENT=5
+export AGENTLOOP_LOGGING_LEVEL=debug
+```
+
+**Format:** `AGENTLOOP_{SECTION}_{FIELD}` (uppercase, underscores)
+
+## Config Loading Priority
+
+1. Environment variables with `AGENTLOOP_` prefix (highest priority)
+2. Config file at `~/.config/agentloop/agentloop.yaml`
+3. Built-in defaults from `config.Defaults()` (lowest priority)
+
+## Common Configurations
+
+### Longer Sessions
+
+```yaml
+sessions:
+  timeout_minutes: 60
+  max_token_budget: 500000
+  max_tool_calls: 200
+```
+
+### Stricter Security
+
+```yaml
+security:
+  allowed_paths:
+    - ~/projects/myapp    # Only allow access to one project
+  blocked_env_prefixes:
+    - ANTHROPIC_
+    - OPENAI_
+    - SECRET_
+    - KEY_
+    - TOKEN_
+    - PASSWORD_
+```
+
+### Better Memory
+
+```yaml
+memory:
+  max_context_tokens: 5000
+  compaction_strategy: facts
+  conversation_retain_days: 90
+```
+
+### Multiple Concurrent Users
+
+```yaml
+sessions:
+  max_concurrent: 10
+  max_per_user: 3
+```
+
+<Aside type="note">
+  Path fields (`socket_path`, `vault.path`, skill directories, log file) support `~/` expansion. AgentLoop resolves these to the actual home directory at load time.
+</Aside>

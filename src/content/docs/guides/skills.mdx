@@ -1,0 +1,132 @@
+---
+title: Skills
+description: Create and manage skills — on-demand instruction sets that inject into agent prompts.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## What Are Skills?
+
+Skills are on-demand instruction sets that AgentLoop injects into the agent prompt when task text matches trigger keywords. Instead of bloating every prompt with specialized instructions, skills activate only when relevant.
+
+## Creating a Skill
+
+### Step 1: Create the Skill Directory
+
+```bash
+mkdir -p ~/.local/share/agentloop/vault/skills/code-review
+```
+
+### Step 2: Write SKILL.md
+
+Create `~/.local/share/agentloop/vault/skills/code-review/SKILL.md`:
+
+```markdown
+---
+name: code-review
+description: Code review best practices and checklist
+triggers:
+  - review
+  - PR
+  - pull request
+  - code review
+---
+
+# Code Review
+
+When reviewing code, follow this checklist:
+
+1. **Correctness** — Does the code do what it claims?
+2. **Security** — Are there injection risks, auth issues, or data leaks?
+3. **Performance** — Any N+1 queries, unnecessary allocations, or missing indexes?
+4. **Readability** — Is the code clear without excessive comments?
+5. **Tests** — Are edge cases covered? Are tests meaningful, not just present?
+6. **Error handling** — Are errors handled gracefully? No swallowed errors?
+
+When providing feedback:
+- Be specific — reference line numbers and file paths
+- Explain WHY something is an issue, not just WHAT
+- Suggest concrete fixes, not just criticism
+- Prioritize: blockers first, then suggestions, then nits
+```
+
+### Step 3: Restart the Server
+
+Skills are loaded on server startup:
+
+```bash
+pm2 restart agentloop-server
+```
+
+### Step 4: Test
+
+Run a task that contains a trigger word:
+
+```bash
+./agentloop "review the changes in src/auth.go"
+```
+
+The skill's instructions are automatically injected into the prompt because the task text contains "review".
+
+## How Trigger Matching Works
+
+For each skill, each trigger keyword is matched against the task text using case-insensitive substring matching:
+
+```go
+strings.Contains(strings.ToLower(taskText), strings.ToLower(trigger))
+```
+
+If **any** trigger matches, the entire skill's instructions are injected into the prompt as a `<skill>` block:
+
+```xml
+<skill name="code-review">
+When reviewing code, follow this checklist:
+...
+</skill>
+```
+
+Multiple skills can match the same task.
+
+## SKILL.md Format
+
+```markdown
+---
+name: skill-name          # Required (defaults to directory name if absent)
+description: What it does  # Optional
+triggers:                  # Required for auto-detection
+  - keyword1
+  - keyword2
+---
+
+Markdown instructions here...
+```
+
+- **name** — Unique identifier for the skill
+- **description** — Human-readable description (used in logs)
+- **triggers** — Array of keywords for auto-activation
+- **Body** — Everything after the second `---` delimiter, written in markdown
+
+## Skill Directories
+
+Skills are loaded from all directories listed in `skills.skill_dirs` config:
+
+```yaml
+skills:
+  skill_dirs:
+    - ~/.local/share/agentloop/vault/skills
+    - ~/my-custom-skills
+```
+
+<Aside type="tip">
+  Skills are loaded on server startup. After adding or modifying a skill, restart the server for changes to take effect.
+</Aside>
+
+## Verifying Skill Loading
+
+Check server startup logs for skill names:
+
+```bash
+pm2 logs agentloop-server --lines 20
+```
+
+You should see log entries indicating which skills were loaded.

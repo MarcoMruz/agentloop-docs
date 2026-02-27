@@ -1,0 +1,116 @@
+---
+title: Slash Commands
+description: Reference for all slash commands available in the AgentLoop Slack Bridge.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Commands
+
+### `/task [in ~/path] description`
+
+Starts an agent task.
+
+**Example:**
+```
+/task in ~/travel-app fix the failing tests
+```
+
+**Behavior:**
+1. Parses optional `in ~/path` prefix as working directory
+2. Sends `task.start` to AgentLoop server
+3. Sets up event streaming in the current channel/thread
+4. Returns session ID
+
+**Goes through agent:** Yes
+
+### `/abort`
+
+Aborts the user's currently running session.
+
+**Example:**
+```
+/abort
+```
+
+**Behavior:**
+1. Calls `session.list` to find the user's running session
+2. Sends `task.abort` for that session
+3. Responds with confirmation
+
+**Goes through agent:** Yes (task.abort RPC)
+
+### `/sessions`
+
+Lists all active sessions for the current user.
+
+**Example:**
+```
+/sessions
+```
+
+**Behavior:**
+1. Sends `session.list` to AgentLoop server
+2. Displays list with session ID, task description, and state
+3. Response is ephemeral (only visible to the user)
+
+**Goes through agent:** Yes (session.list RPC)
+
+### `/weather [city]`
+
+Get current weather conditions.
+
+**Example:**
+```
+/weather Presov
+/weather          # defaults to "Presov"
+```
+
+**Behavior:**
+1. Calls OpenWeatherMap API directly
+2. Returns formatted weather data (temperature, condition, humidity, wind)
+3. Response is ephemeral
+
+**Goes through agent:** No — direct API call, fast and free
+
+**Requires:** `OPENWEATHER_API_KEY` in `.env`
+
+### `/calendar [query]`
+
+Check Google Calendar.
+
+**Example:**
+```
+/calendar today
+/calendar next week
+```
+
+**Behavior:**
+1. Calls Google Calendar API directly
+2. Returns upcoming events
+
+**Goes through agent:** No — direct API call
+
+**Requires:** `GOOGLE_CALENDAR_CREDENTIALS` in `.env`
+
+<Aside type="tip">
+  `/weather` and `/calendar` bypass the agent entirely — they're fast, free shortcuts for quick lookups. Use `/task` for anything that needs agent intelligence.
+</Aside>
+
+## Security
+
+All commands enforce:
+1. **User allowlist** — User must be in `ALLOWED_USER_IDS`
+2. **Rate limiting** — Sliding window per-user rate limiter (default: 20/minute)
+
+Commands that call AgentLoop (task, abort, sessions) additionally check the rate limit. Direct integrations (weather, calendar) only check the allowlist.
+
+## Adding New Commands
+
+To add a new slash command:
+
+1. Register the command in the [Slack API Dashboard](/slack-bridge/slack-app-configuration/)
+2. Add a handler in `src/slack/commands.ts`
+3. Always call `await ack()` first
+4. Always check `isAllowed(command.user_id)`
+5. For AgentLoop-relayed commands, also check rate limit

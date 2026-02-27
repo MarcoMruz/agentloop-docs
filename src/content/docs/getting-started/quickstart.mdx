@@ -1,0 +1,86 @@
+---
+title: Quick Start
+description: Run your first AgentLoop task in under 5 minutes.
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+## Step 1: Start the Server
+
+```bash
+./agentloop-server &
+```
+
+The server creates a Unix socket at `~/.local/share/agentloop/agentloop.sock` and starts listening for JSON-RPC connections.
+
+## Step 2: Health Check
+
+Verify the server is running:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+Expected output:
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"status":"ok","activeSessions":0}}
+```
+
+## Step 3: Run a Task
+
+```bash
+./agentloop "list files in the current directory"
+```
+
+You'll see streamed output as the agent works:
+
+```
+🔧 bash: ls -la
+file1.txt
+file2.go
+README.md
+...
+✅ Done (tokens: 1250, tools: 1, duration: 3.2s)
+```
+
+The CLI receives events from the server in real time:
+- **`event.text`** — Agent's text output, printed directly
+- **`event.tool_use`** — Shows which tool is being called (e.g., `bash`, `edit`)
+- **`event.done`** — Final result with stats (tokens, tool calls, duration)
+
+## Step 4: Check the Vault
+
+After a task completes, it's automatically saved to the vault:
+
+```bash
+ls ~/.local/share/agentloop/vault/sessions/
+```
+
+Each session is stored as a Markdown file with YAML frontmatter, compatible with Obsidian:
+
+```
+2026-02-27-sess-a1b2c3d4.md
+```
+
+## Step 5: Try a More Complex Task
+
+```bash
+./agentloop "create a Go function that validates email addresses"
+```
+
+For tasks involving potentially dangerous operations, you'll see HITL approval prompts:
+
+```
+⚠️ HITL: bash — echo "test@example.com" | grep -E "^[a-zA-Z0-9._%+-]+@..."
+Approve? [y/n/abort]:
+```
+
+Type `y` to approve, `n` to deny, or `abort` to cancel the entire task.
+
+## Next Steps
+
+<LinkCard title="Configuration" href="/guides/configuration/" description="Customize server, memory, sessions, and security settings" />
+<LinkCard title="Slack Bridge Setup" href="/slack-bridge/setup/" description="Connect AgentLoop to your Slack workspace" />
+<LinkCard title="Build a Skill" href="/tutorials/build-a-skill/" description="Create custom instruction sets for specific tasks" />

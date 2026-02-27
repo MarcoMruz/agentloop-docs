@@ -1,0 +1,153 @@
+---
+title: Agent Core
+description: How AgentLoop builds prompts, manages pi subprocesses, and handles the agent event loop.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Task Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant SM as Session Manager
+    participant AC as Agent Core
+    participant PB as Prompt Builder
+    participant Pi as pi subprocess
+
+    C->>S: task.start
+    S->>SM: StartSession()
+    SM->>SM: Enforce limits
+    SM->>AC: Run(ctx, memoryCtx, task, session)
+    AC->>PB: Build prompt
+    PB-->>AC: <memory> + <skills> + task
+    AC->>Pi: Start subprocess + Prompt()
+    Pi-->>AC: event.text / event.tool_use
+    AC-->>S: Broadcast events
+    S-->>C: Stream events
+    Pi-->>AC: done
+    AC-->>SM: RunResult
+    SM->>SM: Save to vault, update memory
+```
+
+## Prompt Structure
+
+The prompt is assembled by `PromptBuilder` in `internal/agent/prompt_builder.go`. It's optimized for Anthropic prompt caching — stable content comes first, dynamic content last.
+
+```
+┌────────────────────────────────┐
+│ <memory>                       │  ← Stable prefix (cached)
+│   User Profile (rendered)      │
+│   Relevant History / Context   │
+│ </memory>                      │
+│                                │
+│ <skill name="git-helper">      │  ← Matched per-task
+│   Skill instructions...        │
+│ </skill>                       │
+│                                │
+│ Task text from user            │  ← Always new (dynamic)
+└────────────────────────────────┘
+```
+
+**Prompt caching**: The memory prefix rarely changes (profile updates are infrequent, history is compacted slowly), so it can be cached across multiple requests. The `PromptCache` in the memory engine handles this with a configurable TTL.
+
+## Pi Subprocess Communication
+
+Each session spawns a separate pi subprocess. Communication happens over stdin/stdout JSON RPC.
+
+**Commands (Agent Core → pi):**
+
+| Command | Purpose |
+|---------|---------|
+| `prompt` | Send the initial task prompt |
+| `steer` | Redirect the agent to a new direction |
+| `abort` | Cancel the current task |
+
+**Events (pi → Agent Core):**
+
+| Event | Purpose |
+|-------|---------|
+| `text` | Text output chunk from the agent |
+| `tool_use` | A tool is about to execute |
+| `tool_result` | Tool execution result |
+| `done` | Task completed |
+| `error` | Task failed |
+| `extension_ui_request` | HITL approval needed (from extension) |
+
+## Event Loop
+
+The agent core runs a `select` loop that handles multiple channels simultaneously:
+
+```go
+select {
+case <-doneCh:        // pi subprocess completed
+case <-sess.AbortCh(): // client sent task.abort
+case text := <-sess.SteerCh(): // client sent task.steer
+case <-ctx.Done():    // context cancelled (timeout, shutdown)
+}
+```
+
+- **Abort** closes the abort channel → agent core picks up → sends abort command to pi → session cleanup
+- **Steer** sends text on a buffered channel (capacity 5) → agent core picks up → sends steer command to pi
+- **Done** signals task completion → collect results → save to vault
+
+## Key Types
+
+### RunResult
+
+```go
+type RunResult struct {
+    Output    string        // Full transcript from pi
+    Error     string        // Error message if failed
+    ToolsUsed []string      // Unique tools called
+    Stats     RunStats
+}
+```
+
+### RunStats
+
+```go
+type RunStats struct {
+    Tokens    int           // Estimated tokens (len(text)/4)
+    ToolCalls int           // Number of unique tools used
+    Duration  time.Duration
+}
+```
+
+### Callbacks
+
+Event routing from agent core to server for broadcasting to clients:
+
+```go
+type Callbacks struct {
+    OnText        func(content string)
+    OnToolUse     func(name string, input map[string]any)
+    OnToolResult  func(name string, output string, success bool)
+    OnHITLRequest func(requestId string, toolName string, details string)
+    OnDone        func(output string, stats RunStats)
+    OnError       func(msg string)
+}
+```
+
+### SessionInterface
+
+Minimal interface that decouples agent core from the session package:
+
+```go
+type SessionInterface interface {
+    WaitHITL(requestId string, timeout time.Duration) (string, error)
+    AbortCh() <-chan struct{}
+    SteerCh() <-chan string
+}
+```
+
+## Extension Loading
+
+TypeScript extensions in the `extensions_dir` are automatically passed to pi via the `-e` flag. Each `.ts` or `.js` file in the directory is loaded as a separate extension.
+
+If `pi.extensions_dir` is not set in config, AgentLoop auto-detects the `extensions/` directory relative to the server binary.
+
+<Aside type="note">
+  Extensions run inside the pi subprocess (Node.js), not the Go server. They have access to Node.js APIs and `process.env`. See [Pi Extensions Guide](/guides/pi-extensions/) for details.
+</Aside>

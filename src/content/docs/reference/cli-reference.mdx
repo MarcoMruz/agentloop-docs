@@ -1,0 +1,93 @@
+---
+title: CLI Reference
+description: Command reference for the agentloop CLI client and agentloop-server.
+---
+
+## agentloop (CLI Client)
+
+The CLI client connects to the AgentLoop server via Unix socket, sends a task, and streams events to the terminal.
+
+### Usage
+
+```bash
+agentloop <task description>
+```
+
+**Example:**
+
+```bash
+agentloop "fix the failing tests in auth.go"
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `<task>` | Task description (positional argument) |
+| `--status` | Send `health.check`, print server status |
+| `--abort <sessionId>` | Send `task.abort` for a specific session |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENTLOOP_SOCKET` | `~/.local/share/agentloop/agentloop.sock` | Override socket path |
+
+### Output Format
+
+| Event | Display |
+|-------|---------|
+| `event.text` | Content printed directly to stdout |
+| `event.tool_use` | `🔧 toolName` |
+| `event.done` | `✅ Done (tokens: N, tools: N, duration: Ns)` |
+| `event.error` | `❌ Error: message` |
+
+### HITL in CLI
+
+When a HITL approval is required:
+
+```
+⚠️  HITL: {toolName} — {details}
+Approve? [y/n/abort]:
+```
+
+| Input | Action |
+|-------|--------|
+| `y` | Approve the tool call |
+| `n` | Deny the tool call (agent continues) |
+| `abort` | Cancel the entire session |
+
+## agentloop-server
+
+The long-running server process that manages all sessions, memory, and communication.
+
+### Usage
+
+```bash
+agentloop-server
+```
+
+The server:
+1. Loads config from `~/.config/agentloop/agentloop.yaml` (or defaults)
+2. Creates the Unix socket at the configured path
+3. Starts listening for JSON-RPC connections
+4. Manages sessions, memory, skills, and HITL routing
+
+### Default Socket Path
+
+```
+~/.local/share/agentloop/agentloop.sock
+```
+
+### Health Check via socat
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+### Build with Version
+
+```bash
+go build -ldflags="-X main.version=v1.0.0" -o agentloop-server ./cmd/agentloop-server
+```

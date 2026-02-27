@@ -1,0 +1,202 @@
+---
+title: Troubleshooting
+description: Common issues and their solutions for AgentLoop server, CLI, Slack Bridge, and pi subprocess.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Server Won't Start
+
+### Stale Socket File
+
+**Symptom:** `bind: address already in use`
+
+**Fix:** Remove the stale socket file:
+
+```bash
+rm ~/.local/share/agentloop/agentloop.sock
+./agentloop-server &
+```
+
+The server normally removes stale sockets on startup, but this can fail if the previous process crashed.
+
+### Socket Permissions
+
+**Symptom:** `permission denied` when creating socket
+
+**Fix:** Ensure the directory exists and is owned by your user:
+
+```bash
+mkdir -p ~/.local/share/agentloop
+chmod 700 ~/.local/share/agentloop
+```
+
+### Config Parse Errors
+
+**Symptom:** Server exits immediately with YAML parse errors
+
+**Fix:** Validate your config file:
+
+```bash
+cat ~/.config/agentloop/agentloop.yaml | python3 -c "import yaml,sys; yaml.safe_load(sys.stdin)"
+```
+
+Common mistakes: incorrect indentation, missing colons, tabs instead of spaces.
+
+## CLI Can't Connect
+
+### Server Not Running
+
+**Symptom:** `connection refused` or `no such file or directory`
+
+**Fix:** Start the server first:
+
+```bash
+./agentloop-server &
+# Wait a moment, then retry
+./agentloop "hello"
+```
+
+### Wrong Socket Path
+
+**Symptom:** CLI connects but gets no response
+
+**Fix:** Ensure both server and CLI use the same socket path:
+
+```bash
+# Check server socket
+ls -la ~/.local/share/agentloop/agentloop.sock
+
+# Override CLI socket path if needed
+AGENTLOOP_SOCKET=~/.local/share/agentloop/agentloop.sock ./agentloop "hello"
+```
+
+## Slack Bridge Is Silent
+
+### Wrong Tokens
+
+**Symptom:** Bridge starts but bot doesn't respond to messages
+
+**Check:**
+- `SLACK_BOT_TOKEN` starts with `xoxb-`
+- `SLACK_APP_TOKEN` starts with `xapp-`
+- Both tokens are from the same Slack app
+
+### User Not Allowed
+
+**Symptom:** Some users get no response, others work fine
+
+**Fix:** Add the user's Slack ID to `ALLOWED_USER_IDS` in `.env`:
+
+```bash
+ALLOWED_USER_IDS=U12345678,U87654321,UNEWUSERID
+```
+
+<Aside type="note">
+  The allowlist is fail-closed — if `ALLOWED_USER_IDS` is empty, ALL users are denied.
+</Aside>
+
+### Bot Not Invited
+
+**Symptom:** @mentions don't trigger responses in channels
+
+**Fix:** Invite the bot to the channel: `/invite @AgentLoop`
+
+### Socket Mode Not Enabled
+
+**Symptom:** Bridge starts but never receives events
+
+**Fix:** In the Slack API dashboard, ensure Socket Mode is ON and the App-Level Token has `connections:write` scope.
+
+## Pi Subprocess Fails
+
+### Pi Not Installed
+
+**Symptom:** `exec: "pi": executable file not found in $PATH`
+
+**Fix:**
+
+```bash
+npm install -g @mariozechner/pi-coding-agent
+pi --version  # Should output 0.54.0
+```
+
+### Wrong Provider or Model
+
+**Symptom:** Pi starts but immediately errors with provider/model issues
+
+**Fix:** Check your config matches your API key:
+
+```yaml
+pi:
+  provider: anthropic           # Must match your API key
+  model: claude-sonnet-4-20250514
+```
+
+### Missing API Key
+
+**Symptom:** `Authentication failed` or `API key not found`
+
+**Fix:** Set the appropriate environment variable:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+# or
+export OPENAI_API_KEY="sk-..."
+```
+
+### Extensions Dir Not Found
+
+**Symptom:** `extensions directory not found` in logs
+
+**Fix:** Set the explicit path in config:
+
+```yaml
+pi:
+  extensions_dir: /absolute/path/to/agentloop/extensions
+```
+
+## HITL Timeout
+
+**Symptom:** Agent auto-denies without waiting for user input
+
+**Cause:** The default HITL timeout is 300 seconds (5 minutes). If no one responds, the server auto-denies.
+
+**Fix:** Increase the timeout:
+
+```yaml
+hitl:
+  timeout_seconds: 600  # 10 minutes
+```
+
+Also verify the client is subscribed to the session's events. If the Slack Bridge reconnected to the socket, it may have lost its event subscriptions.
+
+## Memory Not Updating
+
+### Cache TTL
+
+**Symptom:** Profile changes don't reflect in prompts immediately
+
+**Cause:** The prompt cache has a 5-minute TTL. Changes may not appear until the cache expires.
+
+**Fix:** Wait 5 minutes, or restart the server to clear the cache.
+
+### Session Not Completing
+
+**Symptom:** Profile never updates
+
+**Cause:** `RecordInteraction()` only runs after a session completes normally (state = `done`). Aborted or errored sessions may not trigger memory updates.
+
+## Checking Logs
+
+```bash
+# PM2 logs
+pm2 logs agentloop-server --lines 50
+pm2 logs agentloop-slack --lines 50
+
+# Go server structured logs (slog format)
+# Look for: level=ERROR, level=WARN
+
+# Pi subprocess stderr (captured in server logs)
+# Look for: [pi] prefix
+```

@@ -1,0 +1,169 @@
+---
+title: Events Reference
+description: Complete reference for all AgentLoop event types, their params, and when they fire.
+---
+
+## Overview
+
+Events are server → client **notifications**. They have a `method` field but no `id` field. Clients cannot respond to events — they're one-way.
+
+All events include a `sessionId` in their params to identify which session they belong to.
+
+## Event Types
+
+### `event.text`
+
+Agent text output chunk. Fired as the agent generates text.
+
+```typescript
+interface TextEventParams {
+  sessionId: string;
+  content: string;
+}
+```
+
+```json
+{"jsonrpc":"2.0","method":"event.text","params":{"sessionId":"sess-a1b2c3d4","content":"Looking at the test files to identify failures..."}}
+```
+
+**When:** During agent execution, as text is generated. Multiple chunks may arrive for a single response.
+
+### `event.tool_use`
+
+A tool is about to execute. Fired before tool execution begins.
+
+```typescript
+interface ToolUseEventParams {
+  sessionId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+}
+```
+
+```json
+{"jsonrpc":"2.0","method":"event.tool_use","params":{"sessionId":"sess-a1b2c3d4","toolName":"bash","input":{"command":"go test ./..."}}}
+```
+
+**When:** Before each tool call. Useful for showing progress to users.
+
+### `event.tool_result`
+
+Tool execution completed. Fired after a tool finishes.
+
+```typescript
+interface ToolResultEventParams {
+  sessionId: string;
+  toolName: string;
+  output: string;
+  success: boolean;
+}
+```
+
+```json
+{"jsonrpc":"2.0","method":"event.tool_result","params":{"sessionId":"sess-a1b2c3d4","toolName":"bash","output":"PASS\nok","success":true}}
+```
+
+**When:** After each tool call completes. `success` indicates whether the tool executed without errors.
+
+### `event.hitl_request`
+
+HITL approval needed. Fired when an extension requires human approval.
+
+```typescript
+interface HITLRequestEventParams {
+  sessionId: string;
+  requestId: string;
+  toolName: string;
+  details: string;
+  options: string[];
+}
+```
+
+```json
+{"jsonrpc":"2.0","method":"event.hitl_request","params":{"sessionId":"sess-a1b2c3d4","requestId":"hitl-req-1","toolName":"bash","details":"docker run -v ~/project:/app ubuntu","options":["approve","deny","abort"]}}
+```
+
+**When:** When a pi extension calls `ctx.ui.confirm()` for a tool that requires human approval. The session transitions to `waiting_hitl` state.
+
+### `event.done`
+
+Task completed successfully. Fired once when the agent finishes.
+
+```typescript
+interface DoneEventParams {
+  sessionId: string;
+  output: string;
+  stats: {
+    tokens: number;
+    toolCalls: number;
+    duration: string;
+  };
+}
+```
+
+```json
+{"jsonrpc":"2.0","method":"event.done","params":{"sessionId":"sess-a1b2c3d4","output":"Fixed 2 failing tests","stats":{"tokens":3200,"toolCalls":5,"duration":"12.5s"}}}
+```
+
+**When:** After the agent completes the task. This is the final event for a successful session.
+
+### `event.error`
+
+Task error. Fired when the agent encounters an unrecoverable error.
+
+```typescript
+interface ErrorEventParams {
+  sessionId: string;
+  message: string;
+}
+```
+
+```json
+{"jsonrpc":"2.0","method":"event.error","params":{"sessionId":"sess-a1b2c3d4","message":"pi subprocess exited with code 1"}}
+```
+
+**When:** On fatal errors. This is the final event for a failed session.
+
+### `event.session_saved`
+
+Session persisted to vault. Fired after the session transcript is written.
+
+```typescript
+interface SessionSavedEventParams {
+  sessionId: string;
+}
+```
+
+```json
+{"jsonrpc":"2.0","method":"event.session_saved","params":{"sessionId":"sess-a1b2c3d4"}}
+```
+
+**When:** After `event.done` or `event.error`, once the session has been saved to the vault.
+
+## TypeScript AgentEvent Union
+
+From the Slack Bridge types (`src/agentloop/types.ts`):
+
+```typescript
+type AgentEvent =
+  | { method: "event.text"; params: TextEventParams }
+  | { method: "event.tool_use"; params: ToolUseEventParams }
+  | { method: "event.tool_result"; params: ToolResultEventParams }
+  | { method: "event.hitl_request"; params: HITLRequestEventParams }
+  | { method: "event.done"; params: DoneEventParams }
+  | { method: "event.error"; params: ErrorEventParams }
+  | { method: "event.session_saved"; params: SessionSavedEventParams };
+```
+
+## Event Lifecycle
+
+```
+task.start
+  ├── event.text (multiple)
+  ├── event.tool_use → event.tool_result (per tool)
+  ├── event.hitl_request (if needed)
+  │   └── (client sends hitl.respond)
+  ├── event.text (more)
+  └── event.done / event.error
+      └── event.session_saved
+```

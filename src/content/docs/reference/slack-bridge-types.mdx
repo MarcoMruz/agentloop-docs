@@ -1,0 +1,252 @@
+---
+title: Slack Bridge Types Reference
+description: TypeScript type definitions for the AgentLoop Slack Bridge RPC protocol and client.
+---
+
+## Wire Protocol Types
+
+### RPCRequest
+
+```typescript
+interface RPCRequest {
+  jsonrpc: "2.0";
+  id: number;
+  method: string;
+  params: Record<string, unknown>;
+}
+```
+
+### RPCResponse
+
+```typescript
+interface RPCResponse {
+  jsonrpc: "2.0";
+  id?: number;
+  result?: unknown;
+  error?: { code: number; message: string };
+}
+```
+
+### RPCNotification
+
+```typescript
+interface RPCNotification {
+  jsonrpc: "2.0";
+  method: string;
+  params: Record<string, unknown>;
+}
+```
+
+## Request Parameter Types
+
+```typescript
+interface TaskStartParams {
+  userId: string;
+  text: string;
+  workDir?: string;
+  source?: string;
+}
+
+interface TaskSteerParams {
+  sessionId: string;
+  text: string;
+}
+
+interface TaskAbortParams {
+  sessionId: string;
+}
+
+interface HITLRespondParams {
+  sessionId: string;
+  requestId: string;
+  decision: string;  // "approve" | "deny" | "abort"
+}
+
+interface SessionListParams {
+  userId?: string;
+  status?: string;
+}
+```
+
+## Response Types
+
+```typescript
+interface TaskStartResult {
+  sessionId: string;
+  status: string;
+}
+
+interface OkResult {
+  ok: boolean;
+}
+
+interface SessionInfo {
+  id: string;
+  task: string;
+  state: string;
+  userId?: string;
+  createdAt?: string;
+}
+
+interface HealthCheckResult {
+  status: string;
+  activeSessions: number;
+}
+```
+
+## Event Parameter Types
+
+```typescript
+interface TextEventParams {
+  sessionId: string;
+  content: string;
+}
+
+interface ToolUseEventParams {
+  sessionId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+}
+
+interface ToolResultEventParams {
+  sessionId: string;
+  toolName: string;
+  output: string;
+  success: boolean;
+}
+
+interface HITLRequestEventParams {
+  sessionId: string;
+  requestId: string;
+  toolName: string;
+  details: string;
+  options: string[];
+}
+
+interface DoneEventParams {
+  sessionId: string;
+  output: string;
+  stats: {
+    tokens: number;
+    toolCalls: number;
+    duration: string;
+  };
+}
+
+interface ErrorEventParams {
+  sessionId: string;
+  message: string;
+}
+
+interface SessionSavedEventParams {
+  sessionId: string;
+}
+```
+
+## AgentEvent Discriminated Union
+
+```typescript
+type AgentEvent =
+  | { method: "event.text"; params: TextEventParams }
+  | { method: "event.tool_use"; params: ToolUseEventParams }
+  | { method: "event.tool_result"; params: ToolResultEventParams }
+  | { method: "event.hitl_request"; params: HITLRequestEventParams }
+  | { method: "event.done"; params: DoneEventParams }
+  | { method: "event.error"; params: ErrorEventParams }
+  | { method: "event.session_saved"; params: SessionSavedEventParams };
+```
+
+## AgentLoopClient
+
+```typescript
+class AgentLoopClient extends EventEmitter {
+  constructor();
+
+  // Connection
+  async connect(): Promise<void>;
+  async disconnect(): Promise<void>;
+
+  // Generic RPC
+  async request<T>(method: string, params: Record<string, unknown>): Promise<T>;
+
+  // Task methods
+  async startTask(
+    userId: string,
+    text: string,
+    workDir?: string,
+    source?: string
+  ): Promise<TaskStartResult>;
+
+  async steerTask(
+    sessionId: string,
+    text: string
+  ): Promise<OkResult>;
+
+  async abortTask(
+    sessionId: string
+  ): Promise<OkResult>;
+
+  // HITL
+  async respondHITL(
+    sessionId: string,
+    requestId: string,
+    decision: string
+  ): Promise<OkResult>;
+
+  // Queries
+  async listSessions(
+    userId?: string,
+    status?: string
+  ): Promise<SessionInfo[]>;
+
+  async healthCheck(): Promise<HealthCheckResult>;
+}
+```
+
+## Event Listening
+
+`AgentLoopClient` extends `EventEmitter`. It emits events by method name:
+
+```typescript
+// Listen for specific event types
+client.on("event.text", (params: TextEventParams) => {
+  console.log(params.content);
+});
+
+client.on("event.tool_use", (params: ToolUseEventParams) => {
+  console.log(`Tool: ${params.toolName}`);
+});
+
+client.on("event.hitl_request", (params: HITLRequestEventParams) => {
+  console.log(`HITL: ${params.toolName} — ${params.details}`);
+});
+
+client.on("event.done", (params: DoneEventParams) => {
+  console.log(`Done: ${params.output}`);
+});
+
+client.on("event.error", (params: ErrorEventParams) => {
+  console.error(`Error: ${params.message}`);
+});
+
+// Generic event listener (receives all notifications)
+client.on("event", (notification: RPCNotification) => {
+  console.log(`${notification.method}:`, notification.params);
+});
+```
+
+## Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `REQUEST_TIMEOUT_MS` | `30_000` | RPC request timeout (ms) |
+| `RECONNECT_BASE_MS` | `1_000` | Initial reconnect delay (ms) |
+| `RECONNECT_MAX_MS` | `30_000` | Max reconnect delay (ms) |
+
+## Key Implementation Details
+
+- Events fire for **all sessions** on the single socket connection — listeners must filter by `sessionId`
+- Auto-reconnects with exponential backoff (1s → 2s → 4s → ... → 30s max)
+- Graceful shutdown sets `intentionalClose` flag to prevent reconnection
+- Uses `satisfies` keyword for type-safe RPC params without type widening
+- Pending requests are tracked in a Map of ID to resolve/reject/timer objects and auto-rejected on disconnect

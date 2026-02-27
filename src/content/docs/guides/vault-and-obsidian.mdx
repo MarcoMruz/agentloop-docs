@@ -1,0 +1,141 @@
+---
+title: Vault & Obsidian
+description: How AgentLoop stores sessions as Obsidian-compatible Markdown files and vault directory structure.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Vault Directory Structure
+
+```
+~/.local/share/agentloop/vault/
+├── sessions/              # One markdown file per completed task
+│   └── 2026-02-27-sess-a1b2c3d4.md
+├── memory/
+│   ├── users/             # Per-user YAML profiles
+│   │   └── marco.yaml
+│   ├── contexts/          # Conversation logs per user per day
+│   │   ├── marco-2026-02-27.md
+│   │   └── marco-2026-02-27.idx.json
+│   └── cache/             # Reserved (prompt cache is in-memory)
+└── skills/                # Skill directories with SKILL.md files
+    └── git-helper/
+        └── SKILL.md
+```
+
+## Session Notes
+
+Each completed session is saved as a Markdown file with YAML frontmatter.
+
+**Location:** `vault/sessions/`
+**Filename:** `YYYY-MM-DD-sess-{uuid8}.md`
+
+### Frontmatter Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Session ID (e.g., `sess-a1b2c3d4`) |
+| `title` | string | First 60 characters of the task description |
+| `created` | RFC3339 | When the session started |
+| `updated` | RFC3339 | When the session ended |
+| `status` | string | Final state: `done`, `aborted`, or `error` |
+| `provider` | string | LLM provider (e.g., `anthropic`) |
+| `model` | string | Model identifier (e.g., `claude-sonnet-4-20250514`) |
+| `source` | string | Client source: `cli`, `slack` |
+| `user_id` | string | User who started the task |
+| `tags` | string[] | Tags (empty by default) |
+
+### Body Sections
+
+```markdown
+---
+id: sess-a1b2c3d4
+title: Fix failing tests in user.go
+created: 2026-02-27T14:00:00Z
+updated: 2026-02-27T14:03:25Z
+status: done
+provider: anthropic
+model: claude-sonnet-4-20250514
+source: cli
+user_id: marco
+tags: []
+---
+
+## Task
+Fix failing tests in user.go
+
+## Tools Used
+- bash
+- edit
+
+## HITL Log
+- 14:00:05 | docker | approve
+
+## Transcript
+Looking at the test files...
+Running `go test ./...`
+Found 2 failing tests in user_test.go...
+```
+
+## Obsidian Integration
+
+Since vault files are plain Markdown with YAML frontmatter, they're directly compatible with Obsidian:
+
+1. Open Obsidian
+2. Open vault directory as an Obsidian vault: `~/.local/share/agentloop/vault/`
+3. Browse sessions, search by tags, use graph view
+
+**What you get:**
+- Full text search across all sessions
+- Tag-based filtering
+- Backlinks between related sessions
+- Graph view showing connections
+- Full markdown rendering of transcripts
+
+## Memory Files
+
+### User Profiles
+
+Stored as YAML in `vault/memory/users/{userId}.yaml`:
+
+```yaml
+userid: marco
+name: Marco
+communicationstyle: concise, technical
+preferences:
+  language_preference: TypeScript
+frequentprojects:
+  - ~/travel-app
+  - ~/agentloop
+recenttopics:
+  - authentication
+  - testing
+lastupdated: "2026-02-27T14:00:00Z"
+```
+
+### Conversation Logs
+
+Per-user, per-day markdown files in `vault/memory/contexts/`:
+
+```markdown
+### 14:00:00 [user]
+Fix the failing tests in user.go
+
+### 14:00:05 [assistant]
+I'll look at the test files and identify the failures...
+```
+
+Each log file has an optional index sidecar (`*.idx.json`) for fast keyword/topic search.
+
+## Configuration
+
+Change the vault location:
+
+```yaml
+vault:
+  path: ~/my-obsidian-vault/agentloop
+```
+
+<Aside type="caution">
+  If you change the vault path, existing sessions and memory files won't be migrated. Move the contents manually if needed.
+</Aside>

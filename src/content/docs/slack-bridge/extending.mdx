@@ -1,0 +1,129 @@
+---
+title: Extending the Bridge
+description: How to add slash commands, direct integrations, and event handlers to the Slack Bridge.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Adding a New Slash Command
+
+### 1. Register in Slack API Dashboard
+
+Go to your app's [Slash Commands](/slack-bridge/slack-app-configuration/) settings and create the command.
+
+### 2. Add Handler in commands.ts
+
+```typescript
+app.command("/mycommand", async ({ command, ack, respond }) => {
+  await ack();
+
+  if (!isAllowed(command.user_id)) {
+    await respond("Access denied.");
+    return;
+  }
+
+  // For AgentLoop commands, also rate-limit:
+  // if (!checkRateLimit(command.user_id)) { ... }
+
+  await respond("Command result here");
+});
+```
+
+### 3. Key Rules
+
+- Always call `await ack()` first — Slack requires acknowledgment within 3 seconds
+- Always check `isAllowed(command.user_id)`
+- For AgentLoop-relayed commands, check `checkRateLimit()` too
+- Use `respond()` for ephemeral replies
+
+## Adding a Direct Integration
+
+Direct integrations bypass the agent entirely for fast, simple responses (like `/weather`).
+
+### 1. Create the Integration
+
+Create `src/integrations/myservice.ts`:
+
+```typescript
+import { config } from "../config.js";
+
+export async function getMyServiceData(query: string): Promise<string> {
+  if (!config.MY_API_KEY) {
+    return "MyService is not configured. Set MY_API_KEY in .env.";
+  }
+
+  const response = await fetch(`https://api.myservice.com/data?q=${encodeURIComponent(query)}`, {
+    headers: { Authorization: `Bearer ${config.MY_API_KEY}` },
+  });
+
+  const data = await response.json();
+  return `Result: ${data.value}`;
+}
+```
+
+### 2. Add Config
+
+In `src/config.ts`, add to the schema:
+
+```typescript
+MY_API_KEY: z.string().optional(),
+```
+
+Add to `.env.example`:
+
+```bash
+MY_API_KEY=
+```
+
+### 3. Wire Into Slash Command
+
+In `src/slack/commands.ts`:
+
+```typescript
+import { getMyServiceData } from "../integrations/myservice.js";
+
+app.command("/myservice", async ({ command, ack, respond }) => {
+  await ack();
+  if (!isAllowed(command.user_id)) { await respond("Access denied."); return; }
+  const result = await getMyServiceData(command.text || "default");
+  await respond(result);
+});
+```
+
+## Adding a New Event Handler
+
+Listen for new AgentLoop event types in `events.ts`:
+
+```typescript
+const onNewEvent = (params: NewEventParams) => {
+  if (params.sessionId !== sessionId) return;
+  // Handle the event
+  client.chat.postMessage({
+    channel: channelId,
+    thread_ts: threadTs,
+    text: `New event: ${params.data}`,
+  }).catch(() => {});
+};
+
+agentloop.on("event.new_type", onNewEvent);
+
+// Don't forget to add cleanup:
+const cleanup = () => {
+  agentloop.off("event.new_type", onNewEvent);
+  // ... existing cleanup
+};
+```
+
+## When to Add to Bridge vs AgentLoop
+
+| Add to Bridge | Add to AgentLoop |
+|---|---|
+| Pure transport / formatting | Anything requiring intelligence |
+| Slack-specific UI (Block Kit) | Context or memory awareness |
+| Direct API calls (no agent needed) | Decision-making logic |
+| Rate limiting, allowlisting | Skills, tools, prompts |
+| Thread/channel management | Session management |
+
+<Aside type="note">
+  The key principle: if it needs intelligence, add it to AgentLoop as a skill or extension. Keep the bridge thin and focused on Slack-specific concerns.
+</Aside>

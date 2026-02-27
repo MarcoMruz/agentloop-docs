@@ -1,0 +1,103 @@
+---
+title: Installation
+description: Install AgentLoop server, CLI client, and all prerequisites.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Prerequisites
+
+- **Go** >= 1.23.0
+- **Node.js** >= 18 (for pi and extensions)
+- **npm** (comes with Node.js)
+
+## Step 1: Install pi
+
+AgentLoop uses pi as its underlying coding agent runtime.
+
+```bash
+npm install -g @mariozechner/pi-coding-agent
+```
+
+Verify the installation:
+
+```bash
+pi --version
+# Should output: 0.54.0
+```
+
+## Step 2: Clone and Build AgentLoop
+
+```bash
+git clone https://github.com/user/agentloop.git
+cd agentloop
+```
+
+Build both binaries:
+
+```bash
+# Build the server
+go build -o agentloop-server ./cmd/agentloop-server
+
+# Build the CLI client
+go build -o agentloop ./cmd/agentloop
+```
+
+Optionally build with a version tag:
+
+```bash
+go build -ldflags="-X main.version=v1.0.0" -o agentloop-server ./cmd/agentloop-server
+```
+
+## Step 3: Configure
+
+The default config location is `~/.config/agentloop/agentloop.yaml`. If the file doesn't exist, AgentLoop uses sensible defaults.
+
+Create a minimal config:
+
+```bash
+mkdir -p ~/.config/agentloop
+```
+
+```yaml
+# ~/.config/agentloop/agentloop.yaml
+pi:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+```
+
+### Set Your API Key
+
+AgentLoop passes environment variables to pi. Set the key for your chosen provider:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+<Aside type="note">
+  Configuration priority: environment variables (`AGENTLOOP_*` prefix) override config file values, which override built-in defaults. See the [Configuration Guide](/guides/configuration/) for details.
+</Aside>
+
+## Step 4: Verify
+
+```bash
+# Start the server
+./agentloop-server &
+
+# Health check
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+
+# Should output: {"jsonrpc":"2.0","id":1,"result":{"status":"ok","activeSessions":0}}
+```
+
+```bash
+# Verify CLI
+./agentloop "hello"
+```
+
+## Next Steps
+
+- [Quick Start](/getting-started/quickstart/) — Run your first task
+- [Configuration Guide](/guides/configuration/) — Customize all settings
+- [Slack Bridge Setup](/slack-bridge/setup/) — Connect to Slack

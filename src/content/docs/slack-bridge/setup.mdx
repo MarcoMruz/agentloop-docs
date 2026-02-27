@@ -1,0 +1,101 @@
+---
+title: Slack Bridge Setup
+description: Install and configure the AgentLoop Slack Bridge.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Prerequisites
+
+- **Node.js** >= 20
+- **npm** (comes with Node.js)
+- **AgentLoop server** running and healthy
+
+Verify the server is running:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+## Step 1: Clone and Install
+
+```bash
+git clone https://github.com/user/agentloop-slack.git
+cd agentloop-slack
+npm install
+```
+
+## Step 2: Configure Environment
+
+Copy the example env file and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+
+```bash
+# Required: Slack tokens (from Slack API Dashboard)
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+
+# Required: Comma-separated Slack user IDs who can use the bot
+ALLOWED_USER_IDS=U12345678,U87654321
+
+# Optional: AgentLoop server socket (default shown)
+AGENTLOOP_SOCKET=~/.local/share/agentloop/agentloop.sock
+
+# Optional: Integration API keys
+OPENWEATHER_API_KEY=
+GOOGLE_CALENDAR_CREDENTIALS=
+
+# Optional: Tuning
+RATE_LIMIT_PER_MINUTE=20
+LOG_LEVEL=info
+```
+
+See [Slack App Configuration](/slack-bridge/slack-app-configuration/) for how to get the tokens.
+
+## Step 3: Build
+
+```bash
+npm run build
+```
+
+## Step 4: Start
+
+```bash
+# Via PM2 (recommended)
+pm2 start ecosystem.config.cjs
+
+# Or directly
+npm start
+```
+
+## Step 5: Verify
+
+```bash
+# Check PM2 status
+pm2 status
+
+# Check logs
+pm2 logs agentloop-slack --lines 20
+```
+
+Send a DM to your bot in Slack. You should see:
+1. An "eyes" reaction on your message
+2. Streamed responses in a thread
+3. A final result with stats
+
+<Aside type="caution">
+  The AgentLoop server must be running before starting the Slack bridge. The bridge connects to the server socket on startup and will retry with exponential backoff if the connection fails.
+</Aside>
+
+## Troubleshooting
+
+- **No response from bot** — Check `ALLOWED_USER_IDS` includes your Slack user ID
+- **"Connection refused"** — AgentLoop server is not running
+- **"Invalid token"** — Verify `SLACK_BOT_TOKEN` starts with `xoxb-` and `SLACK_APP_TOKEN` starts with `xapp-`
+- See [Troubleshooting Guide](/guides/troubleshooting/) for more

@@ -1,0 +1,53 @@
+---
+title: AgentLoop
+description: AI agent orchestrator with persistent memory, HITL safety, and multi-client support.
+template: splash
+hero:
+  tagline: AI Agent Orchestrator with Memory, HITL Safety, and Multi-Client Support
+  actions:
+    - text: Get Started
+      link: /getting-started/overview/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/user/agentloop
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+## Why AgentLoop?
+
+AgentLoop wraps the **pi coding agent** and adds everything needed to run it in production: persistent memory, human-in-the-loop safety gates, session management, and multi-client support — all accessible via a Unix socket JSON-RPC API.
+
+<CardGrid>
+  <Card title="Persistent Memory" icon="pencil">
+    User profiles, conversation history, three compaction strategies, and prompt caching. The agent remembers your preferences, projects, and past interactions across sessions.
+  </Card>
+  <Card title="HITL Safety" icon="warning">
+    Human approval gates for dangerous operations — docker commands, git push, destructive file operations, and network requests. Works in CLI and Slack.
+  </Card>
+  <Card title="Multi-Client Support" icon="laptop">
+    CLI, Slack, and future web UI — all connected via Unix socket JSON-RPC. One server, multiple clients, shared state and memory.
+  </Card>
+</CardGrid>
+
+## Quick Start
+
+```bash
+# Build both binaries
+go build -o agentloop-server ./cmd/agentloop-server
+go build -o agentloop ./cmd/agentloop
+
+# Start the server
+./agentloop-server &
+
+# Run your first task
+./agentloop "list files in the current directory"
+```
+
+<CardGrid>
+  <LinkCard title="Getting Started" href="/getting-started/overview/" description="Understand the architecture and install AgentLoop" />
+  <LinkCard title="Architecture" href="/architecture/system-design/" description="Deep dive into system design and components" />
+  <LinkCard title="Slack Bridge" href="/slack-bridge/overview/" description="Connect AgentLoop to Slack for team-wide access" />
+</CardGrid>

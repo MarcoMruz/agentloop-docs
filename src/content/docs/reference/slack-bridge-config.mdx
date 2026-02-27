@@ -1,0 +1,75 @@
+---
+title: Slack Bridge Configuration
+description: Environment variable reference for the AgentLoop Slack Bridge.
+---
+
+## Environment Variables
+
+All configuration is done via environment variables, validated by Zod on startup.
+
+| Variable | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `SLACK_BOT_TOKEN` | string | Yes | — | Bot User OAuth Token (starts with `xoxb-`) |
+| `SLACK_APP_TOKEN` | string | Yes | — | App-Level Token for Socket Mode (starts with `xapp-`) |
+| `ALLOWED_USER_IDS` | string | Yes | `""` | Comma-separated Slack user IDs. Empty = deny all. |
+| `AGENTLOOP_SOCKET` | string | No | `~/.local/share/agentloop/agentloop.sock` | Path to AgentLoop server Unix socket |
+| `OPENWEATHER_API_KEY` | string | No | — | API key for `/weather` command |
+| `GOOGLE_CALENDAR_CREDENTIALS` | string | No | — | Credentials for `/calendar` command |
+| `RATE_LIMIT_PER_MINUTE` | number | No | `20` | Max requests per user per minute |
+| `LOG_LEVEL` | enum | No | `info` | Log level: `debug`, `info`, `warn`, `error` |
+
+## Zod Schema
+
+```typescript
+const ConfigSchema = z.object({
+  SLACK_BOT_TOKEN: z.string().startsWith("xoxb-"),
+  SLACK_APP_TOKEN: z.string().startsWith("xapp-"),
+  ALLOWED_USER_IDS: z.string()
+    .default("")
+    .transform(s => s.split(",").map(id => id.trim())),
+  AGENTLOOP_SOCKET: z.string()
+    .default("~/.local/share/agentloop/agentloop.sock")
+    .transform(p => p.replace(/^~/, homedir())),
+  OPENWEATHER_API_KEY: z.string().optional(),
+  GOOGLE_CALENDAR_CREDENTIALS: z.string().optional(),
+  RATE_LIMIT_PER_MINUTE: z.coerce.number().default(20),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+});
+```
+
+**Inferred type:** `type Config = z.infer<typeof ConfigSchema>`
+
+## .env.example
+
+```bash
+# Slack tokens (required)
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+
+# User allowlist (required - empty means deny all)
+ALLOWED_USER_IDS=U12345678,U87654321
+
+# AgentLoop server socket (optional)
+AGENTLOOP_SOCKET=~/.local/share/agentloop/agentloop.sock
+
+# Integration API keys (optional)
+OPENWEATHER_API_KEY=
+GOOGLE_CALENDAR_CREDENTIALS=
+
+# Tuning (optional)
+RATE_LIMIT_PER_MINUTE=20
+LOG_LEVEL=info
+```
+
+## Validation
+
+Config is parsed at module load time via `dotenv` + Zod. If validation fails, the process exits with a descriptive error message.
+
+**Common validation errors:**
+- `SLACK_BOT_TOKEN` doesn't start with `xoxb-`
+- `SLACK_APP_TOKEN` doesn't start with `xapp-`
+- `RATE_LIMIT_PER_MINUTE` is not a valid number
+
+## Path Expansion
+
+The `AGENTLOOP_SOCKET` path has `~` expanded to `os.homedir()` at parse time. Do not hardcode absolute paths — the tilde expansion handles user-specific paths.

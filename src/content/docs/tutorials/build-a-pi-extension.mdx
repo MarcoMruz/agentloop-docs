@@ -1,0 +1,129 @@
+---
+title: "Tutorial: Build a Pi Extension"
+description: Step-by-step guide to creating a tool-logging extension for the pi coding agent.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Goal
+
+Create a **log-tools** extension that logs every tool call to a file for auditing and debugging.
+
+## Step 1: Create the Extension File
+
+Create `extensions/log-tools.ts` in your AgentLoop repository:
+
+```typescript
+import { appendFileSync } from "node:fs";
+import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+
+const ext: ExtensionFactory = (pi) => {
+  const logPath = process.env.AGENTLOOP_TOOL_LOG || "/tmp/agentloop-tools.log";
+
+  pi.on("toolCall", (ctx) => {
+    const entry = `[${new Date().toISOString()}] ${ctx.tool.name}: ${JSON.stringify(ctx.tool.input).slice(0, 200)}\n`;
+    appendFileSync(logPath, entry);
+    return { action: "continue" };
+  });
+};
+
+export default ext;
+```
+
+### What This Does
+
+1. **Intercepts every tool call** via `pi.on("toolCall", ...)`
+2. **Logs tool name and input** to a file, truncated to 200 characters
+3. **Returns `{ action: "continue" }`** to allow the tool to execute normally
+
+## Step 2: Configure
+
+Ensure your config points to the extensions directory:
+
+```yaml
+pi:
+  extensions_dir: /path/to/agentloop/extensions
+```
+
+Or place the file in the default `extensions/` directory next to the `agentloop-server` binary.
+
+## Step 3: Restart and Test
+
+```bash
+pm2 restart agentloop-server
+./agentloop "list files in the current directory"
+```
+
+## Step 4: Check the Log
+
+```bash
+cat /tmp/agentloop-tools.log
+```
+
+You should see entries like:
+
+```
+[2026-02-27T14:00:05.123Z] bash: {"command":"ls -la"}
+[2026-02-27T14:00:06.456Z] bash: {"command":"cat README.md"}
+```
+
+## Step 5: Enhance
+
+### Filter by Tool Name
+
+Only log specific tools:
+
+```typescript
+const ext: ExtensionFactory = (pi) => {
+  const logPath = process.env.AGENTLOOP_TOOL_LOG || "/tmp/agentloop-tools.log";
+  const logTools = new Set(["bash", "write", "edit"]);
+
+  pi.on("toolCall", (ctx) => {
+    if (logTools.has(ctx.tool.name)) {
+      const entry = `[${new Date().toISOString()}] ${ctx.tool.name}: ${JSON.stringify(ctx.tool.input).slice(0, 200)}\n`;
+      appendFileSync(logPath, entry);
+    }
+    return { action: "continue" };
+  });
+};
+```
+
+### Add HITL for Specific Tools
+
+Request human approval before executing destructive tools:
+
+```typescript
+pi.on("toolCall", async (ctx) => {
+  if (ctx.tool.name === "bash" && ctx.tool.input.command?.includes("rm")) {
+    const approved = await ctx.ui.confirm(
+      "Destructive Command",
+      `${ctx.tool.input.command}`
+    );
+    if (!approved) {
+      return { action: "block", message: "User denied destructive command" };
+    }
+  }
+  return { action: "continue" };
+});
+```
+
+<Aside type="note">
+  Extensions run inside the pi subprocess (Node.js), not the Go server. They have access to `node:fs`, `node:path`, `process.env`, and other Node.js APIs. Each extension is loaded independently — they cannot import from each other.
+</Aside>
+
+## Extension Lifecycle
+
+```
+Server starts session
+    → PiBridge.Start() launches pi subprocess
+    → pi loads all .ts/.js files from extensions_dir via -e flag
+    → Extensions register their hooks
+    → For each tool call: hooks fire in registration order
+    → Extension returns continue or block action
+```
+
+## Next Steps
+
+- See [Pi Extension API Reference](/reference/pi-extension-api/) for the complete API
+- See [Pi Extensions Guide](/guides/pi-extensions/) for more patterns
+- Review the existing `security-policy.ts` and `docker-guard.ts` for production examples

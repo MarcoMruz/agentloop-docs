@@ -1,0 +1,238 @@
+---
+title: "Tutorial: Connect a New Client"
+description: Build a minimal Python client that connects to AgentLoop over Unix socket.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Goal
+
+Build a minimal Python client that connects to AgentLoop, sends a task, and receives streamed events. This demonstrates that the Unix socket API is language-agnostic.
+
+## Step 1: Understand the Protocol
+
+- **Transport:** Unix domain socket
+- **Protocol:** JSON-RPC 2.0
+- **Framing:** One JSON object per line, terminated by `\n`
+- **Requests:** Have an `id` field, server responds with matching `id`
+- **Notifications:** Have a `method` field but no `id`, server → client only
+
+## Step 2: Connect and Health Check
+
+```python
+import socket
+import json
+import os
+
+# Connect to the Unix socket
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+sock.connect(os.path.expanduser("~/.local/share/agentloop/agentloop.sock"))
+
+def send(method, params, msg_id=1):
+    """Send a JSON-RPC request."""
+    msg = json.dumps({
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "method": method,
+        "params": params
+    })
+    sock.sendall((msg + "\n").encode())
+
+def recv_line():
+    """Read one line-delimited JSON message."""
+    data = b""
+    while not data.endswith(b"\n"):
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise ConnectionError("Socket closed")
+        data += chunk
+    return json.loads(data.decode())
+
+# Health check
+send("health.check", {})
+response = recv_line()
+print(response)
+# {"jsonrpc": "2.0", "id": 1, "result": {"status": "ok", "activeSessions": 0}}
+```
+
+## Step 3: Start a Task and Read Events
+
+```python
+import threading
+
+# Start a task
+send("task.start", {
+    "userId": "python-client",
+    "text": "list files in the current directory",
+    "source": "python"
+}, msg_id=2)
+
+# Read the response (contains sessionId)
+response = recv_line()
+session_id = response["result"]["sessionId"]
+print(f"Session started: {session_id}")
+
+# Read streamed events
+while True:
+    msg = recv_line()
+
+    # Notifications (events) have no "id" field
+    if "method" in msg and "id" not in msg:
+        method = msg["method"]
+        params = msg["params"]
+
+        if method == "event.text":
+            print(params["content"], end="", flush=True)
+
+        elif method == "event.tool_use":
+            print(f"\n🔧 Using tool: {params['toolName']}")
+
+        elif method == "event.tool_result":
+            success = "✅" if params["success"] else "❌"
+            print(f"{success} Tool result: {params['output'][:200]}")
+
+        elif method == "event.done":
+            stats = params.get("stats", {})
+            print(f"\n✅ Done (tokens: {stats.get('tokens', '?')}, "
+                  f"tools: {stats.get('toolCalls', '?')}, "
+                  f"duration: {stats.get('duration', '?')})")
+            break
+
+        elif method == "event.error":
+            print(f"\n❌ Error: {params['message']}")
+            break
+
+        elif method == "event.hitl_request":
+            # Handle HITL - see Step 4
+            handle_hitl(msg, params)
+```
+
+## Step 4: Handle HITL Requests
+
+```python
+def handle_hitl(msg, params):
+    """Prompt user for HITL approval."""
+    print(f"\n⚠️  HITL: {params['toolName']} — {params['details']}")
+    decision = input("Approve? [y/n/abort]: ").strip().lower()
+
+    if decision == "y":
+        decision = "approve"
+    elif decision == "abort":
+        decision = "abort"
+    else:
+        decision = "deny"
+
+    send("hitl.respond", {
+        "sessionId": params["sessionId"],
+        "requestId": params["requestId"],
+        "decision": decision
+    }, msg_id=100)
+
+    # Read the response
+    recv_line()  # Consume the hitl.respond result
+```
+
+## Step 5: Full Working Client
+
+```python
+#!/usr/bin/env python3
+"""Minimal AgentLoop client in Python."""
+
+import socket
+import json
+import os
+import sys
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python client.py 'your task here'")
+        sys.exit(1)
+
+    task = " ".join(sys.argv[1:])
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(os.path.expanduser(
+        "~/.local/share/agentloop/agentloop.sock"
+    ))
+
+    msg_id = 0
+
+    def send(method, params):
+        nonlocal msg_id
+        msg_id += 1
+        msg = json.dumps({
+            "jsonrpc": "2.0", "id": msg_id,
+            "method": method, "params": params
+        })
+        sock.sendall((msg + "\n").encode())
+        return msg_id
+
+    buf = b""
+    def recv_line():
+        nonlocal buf
+        while b"\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("Disconnected")
+            buf += chunk
+        line, buf = buf.split(b"\n", 1)
+        return json.loads(line.decode())
+
+    # Start task
+    send("task.start", {
+        "userId": os.getenv("USER", "python"),
+        "text": task,
+        "source": "python"
+    })
+    resp = recv_line()
+    session_id = resp["result"]["sessionId"]
+
+    # Event loop
+    while True:
+        msg = recv_line()
+        if "id" in msg and "method" not in msg:
+            continue  # Skip RPC responses
+
+        method = msg.get("method", "")
+        params = msg.get("params", {})
+
+        if method == "event.text":
+            print(params["content"], end="", flush=True)
+        elif method == "event.tool_use":
+            print(f"\n🔧 {params['toolName']}")
+        elif method == "event.hitl_request":
+            choice = input(
+                f"\n⚠️ {params['toolName']}: "
+                f"{params['details']}\n[y/n/abort]: "
+            ).strip().lower()
+            decision = {"y": "approve", "abort": "abort"}.get(choice, "deny")
+            send("hitl.respond", {
+                "sessionId": session_id,
+                "requestId": params["requestId"],
+                "decision": decision
+            })
+        elif method == "event.done":
+            stats = params.get("stats", {})
+            print(f"\n✅ Done ({stats})")
+            break
+        elif method == "event.error":
+            print(f"\n❌ {params['message']}")
+            break
+
+    sock.close()
+
+if __name__ == "__main__":
+    main()
+```
+
+## Key Takeaway
+
+The AgentLoop Unix socket API is language-agnostic. Any language that can:
+1. Connect to a Unix domain socket
+2. Send and receive newline-delimited JSON
+3. Parse JSON-RPC 2.0 messages
+
+...can be an AgentLoop client.
+
+<Aside type="tip">
+  For production clients, add connection retry logic, proper error handling, and concurrent event processing. See the [Slack Bridge source](https://github.com/user/agentloop-slack) for a complete TypeScript client implementation.
+</Aside>

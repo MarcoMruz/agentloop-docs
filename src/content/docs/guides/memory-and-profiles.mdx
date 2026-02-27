@@ -1,0 +1,136 @@
+---
+title: Memory & Profiles
+description: How memory works, viewing and editing profiles, compaction strategies, and tuning tips.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## How Memory Works
+
+Memory operates automatically — no user action is needed. After every task:
+
+1. **Conversation logged** — The interaction is saved to `vault/memory/contexts/{userId}-{date}.md`
+2. **Profile updated** — Heuristics extract project paths, topics, and tool usage from the conversation
+3. **Cache invalidated** — The prompt cache for the user is cleared
+
+The next time a task runs, the Memory Engine assembles fresh context from the profile and relevant history.
+
+## Viewing Your Profile
+
+Use `memory.get` via socat:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"memory.get","params":{"userId":"marco"}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+Or directly read the YAML file:
+
+```bash
+cat ~/.local/share/agentloop/vault/memory/users/marco.yaml
+```
+
+Example profile:
+
+```yaml
+userid: marco
+name: Marco
+communicationstyle: concise, technical
+preferences:
+  language_preference: TypeScript
+  timezone: Europe/Bratislava
+frequentprojects:
+  - ~/travel-app
+  - ~/agentloop
+toolpreferences:
+  - bash
+  - edit
+factsheet:
+  timezone: Europe/Bratislava
+  editor: neovim
+recenttopics:
+  - authentication
+  - testing
+  - deployment
+lastupdated: "2026-02-27T14:00:00Z"
+```
+
+## Adding Facts
+
+Add explicit facts to your profile with `memory.update`:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"memory.update","params":{"userId":"marco","key":"language_preference","value":"TypeScript"}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+Common facts to set:
+- `language_preference` — Preferred programming language
+- `timezone` — Your timezone
+- `editor` — Preferred editor
+- `code_style` — Coding style preferences
+
+## Removing Facts
+
+Remove a fact with `memory.forget`:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"memory.forget","params":{"userId":"marco","key":"old_preference"}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+## Compaction Strategy Guide
+
+When conversation history grows beyond `compaction_threshold` (default: 40 entries), a compaction strategy runs. Choose based on your usage pattern:
+
+| Strategy | Best For | How It Works |
+|----------|----------|--------------|
+| `rolling` (default) | General use | Keeps last 5 turns verbatim, summarizes older entries as bullet points |
+| `facts` | Project-heavy work | Extracts only action/decision lines (decided, created, fixed, deployed) |
+| `topics` | Diverse tasks | One entry per topic, deduplicates by topic category |
+
+### When to Use Each
+
+- **Rolling** — You work on varied tasks and want a mix of recent detail and historical summary
+- **Facts** — You frequently reference past decisions and want to maximize relevant information density
+- **Topics** — You switch between many different domains and want broad coverage without redundancy
+
+Set in config:
+
+```yaml
+memory:
+  compaction_strategy: facts
+```
+
+## Tuning Tips
+
+### More Context in Prompts
+
+Increase `max_context_tokens` for richer memory context. This uses more of the LLM's context window but gives the agent more history to work with.
+
+```yaml
+memory:
+  max_context_tokens: 5000  # Default: 3000
+```
+
+### Longer History Retention
+
+Keep conversation logs for longer:
+
+```yaml
+memory:
+  conversation_retain_days: 90  # Default: 30
+```
+
+### More Aggressive Compaction
+
+Lower the threshold to compact more frequently:
+
+```yaml
+memory:
+  compaction_threshold: 20  # Default: 40
+```
+
+<Aside type="tip">
+  Profile updates use heuristics only — no LLM calls. They extract project paths from `~/...` patterns and topics from a 33-domain taxonomy. This makes memory updates fast and free.
+</Aside>

@@ -1,0 +1,160 @@
+---
+title: Pi Extension API Reference
+description: Complete API reference for writing pi coding agent extensions.
+---
+
+## Extension File Location
+
+Extensions are placed in `pi.extensions_dir` (or auto-discovered from the `extensions/` directory next to the binary). All `.ts` and `.js` files in the directory are loaded automatically.
+
+## ExtensionFactory
+
+Every extension exports a default factory function:
+
+```typescript
+type ExtensionFactory = (pi: PiInstance) => void;
+```
+
+```typescript
+import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
+
+const ext: ExtensionFactory = (pi) => {
+  // Register hooks and tools here
+};
+
+export default ext;
+```
+
+## Event Hooks
+
+### `pi.on("toolCall", handler)`
+
+Intercept tool calls before execution.
+
+```typescript
+pi.on("toolCall", (ctx: ToolCallContext) => {
+  // Inspect and decide
+  return { action: "continue" };
+  // or
+  return { action: "block", message: "Reason for blocking" };
+});
+```
+
+**ToolCallContext:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ctx.tool.name` | `string` | Tool name (e.g., `bash`, `edit`, `write`) |
+| `ctx.tool.input` | `Record<string, any>` | Tool input parameters |
+| `ctx.ui` | `UIContext` | UI methods for HITL |
+
+**Return value:**
+
+| Action | Behavior |
+|--------|----------|
+| `{ action: "continue" }` | Allow tool execution |
+| `{ action: "block", message?: string }` | Block execution, optional reason |
+
+Handlers can be `async` — the runtime awaits them.
+
+## Tool Registration
+
+### `pi.addTool(definition)`
+
+Register a custom tool the agent can use.
+
+```typescript
+pi.addTool({
+  name: "my-tool",
+  description: "What this tool does",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "The search query" },
+    },
+    required: ["query"],
+  },
+  execute: (input: { query: string }) => {
+    return `Result for: ${input.query}`;
+  },
+});
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Tool name (must be unique) |
+| `description` | `string` | Description shown to the LLM |
+| `parameters` | JSON Schema | Input parameter schema |
+| `execute` | `(input) => string` | Tool implementation |
+
+## UI Methods
+
+### `ctx.ui.confirm(title, details)`
+
+Trigger a HITL approval flow.
+
+```typescript
+const approved: boolean = await ctx.ui.confirm(
+  "Destructive Operation",
+  "rm -rf ~/old-project"
+);
+```
+
+**Returns:** `Promise<boolean>` — `true` if approved, `false` if denied
+
+**Flow:**
+1. Sends `extension_ui_request` to AgentLoop bridge
+2. Bridge broadcasts `event.hitl_request` to clients
+3. Client presents approval UI
+4. Client responds via `hitl.respond`
+5. Promise resolves with the decision
+
+If the user chooses "abort", the entire session is aborted (not just the tool call).
+
+## Environment Variables
+
+Extensions access server-set variables via `process.env`:
+
+```typescript
+const paths = process.env.AGENTLOOP_ALLOWED_PATHS || "";
+const dockerAllowed = process.env.AGENTLOOP_DOCKER_ALLOWED || "ps,logs,images";
+```
+
+**Convention:** Use `AGENTLOOP_*` prefix for all extension configuration.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `AGENTLOOP_ALLOWED_PATHS` | Comma-separated allowed file paths | (empty = no restriction) |
+| `AGENTLOOP_DOCKER_ALLOWED` | Comma-separated allowed docker subcommands | `ps,logs,images,build,compose,inspect,stats` |
+| `AGENTLOOP_DOCKER_BLOCKED_VOLS` | Comma-separated blocked volume paths | `/etc,/var,/root,/proc,/sys,/dev` |
+
+## Existing Extensions
+
+### security-policy.ts
+
+**Type:** Permission gate
+
+**Intercepts:** `bash`, `write`, `edit` tool calls
+
+**Blocks:**
+- Dangerous bash patterns: `rm -rf /`, `sudo rm`, `mkfs`, `dd if=`, fork bombs
+- Environment exfiltration: `printenv`, `env |`, `echo $ANTHROPIC`, `echo $OPENAI`, `cat /proc/*/environ`
+- Write operations outside allowed paths
+
+### docker-guard.ts
+
+**Type:** Permission gate
+
+**Intercepts:** `bash` tool calls containing `docker` or `docker-compose`
+
+**Validates:**
+- Subcommand against `AGENTLOOP_DOCKER_ALLOWED` whitelist
+- Volume mounts (`-v`/`--volume`) against `AGENTLOOP_DOCKER_BLOCKED_VOLS`
+
+## Limitations
+
+- Extensions **cannot import from each other** — each is loaded independently by pi
+- Extensions run in the **pi subprocess** (Node.js), not the Go server
+- Extensions have access to **Node.js built-in modules** (`fs`, `path`, `os`, etc.)
+- Extension hooks fire in **registration order**
+- If any hook returns `{ action: "block" }`, the tool call is blocked regardless of other hooks

@@ -1,0 +1,115 @@
+---
+title: "Tutorial: Build a Skill"
+description: Step-by-step guide to creating a Git workflow skill for AgentLoop.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Goal
+
+Create a **git-helper** skill that provides Git workflow guidance whenever a task mentions Git-related keywords.
+
+## Step 1: Create the Skill Directory
+
+```bash
+mkdir -p ~/.local/share/agentloop/vault/skills/git-helper
+```
+
+## Step 2: Write SKILL.md
+
+Create `~/.local/share/agentloop/vault/skills/git-helper/SKILL.md`:
+
+```markdown
+---
+name: git-helper
+description: Git workflow best practices and conventional commits
+triggers:
+  - git
+  - commit
+  - branch
+  - merge
+  - rebase
+---
+
+# Git Helper
+
+When working with Git, follow these conventions:
+- Use conventional commits: feat:, fix:, docs:, refactor:, test:, chore:
+- Create feature branches from main: `git checkout -b feat/description`
+- Squash commits before merging
+- Write meaningful commit messages explaining WHY, not just WHAT
+- Always run tests before committing
+- Use `git status` and `git diff` before staging
+- Prefer `git add -p` for selective staging over `git add .`
+```
+
+### Frontmatter Breakdown
+
+- **`name: git-helper`** — Unique identifier, shown in logs
+- **`description`** — Human-readable, for documentation purposes
+- **`triggers`** — Any of these keywords in the task text will activate this skill
+
+## Step 3: Restart the Server
+
+Skills are loaded on server startup:
+
+```bash
+pm2 restart agentloop-server
+```
+
+Check the logs to confirm the skill was loaded:
+
+```bash
+pm2 logs agentloop-server --lines 10
+```
+
+You should see a log entry indicating the `git-helper` skill was registered.
+
+## Step 4: Test
+
+Run a task that contains a trigger word:
+
+```bash
+./agentloop "create a feature branch for the login page"
+```
+
+The skill activates because `"branch"` is in the trigger list. The agent now has the Git workflow instructions in its prompt.
+
+## Step 5: Verify
+
+The agent should follow the conventions from the skill:
+
+```bash
+# Expected behavior:
+# - Creates branch with "feat/" prefix
+# - Uses conventional naming
+# - Follows the skill's instructions
+```
+
+## How It Works
+
+When the task text is processed, `PromptBuilder.DetectSkills()` runs:
+
+1. For each registered skill, check each trigger keyword
+2. Matching is case-insensitive substring: `strings.Contains(strings.ToLower("create a feature branch for the login page"), "branch")` → **match**
+3. The skill's instructions are injected into the prompt as:
+
+```xml
+<skill name="git-helper">
+# Git Helper
+When working with Git, follow these conventions:
+...
+</skill>
+```
+
+Multiple skills can match the same task. They're all injected.
+
+<Aside type="tip">
+  Choose specific trigger words to avoid false matches. For example, use `"git push"` instead of just `"push"` if you only want the skill to activate for Git operations.
+</Aside>
+
+## Next Steps
+
+- Add more skills for your common workflows (code review, deployment, testing)
+- See [Skills Format Reference](/reference/skills-format/) for the complete SKILL.md specification
+- See [Skills Guide](/guides/skills/) for additional examples
