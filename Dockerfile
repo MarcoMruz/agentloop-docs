@@ -1,17 +1,32 @@
-FROM node:22-alpine AS builder
-
+FROM node:20-alpine AS base
 WORKDIR /app
 
-COPY package*.json ./
+FROM base AS deps
+COPY package.json package-lock.json ./
 RUN npm ci
 
+FROM base AS builder
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM nginx:alpine
+FROM base AS runner
+WORKDIR /app
 
-COPY --from=builder /app/dist /usr/share/nginx/html
+ENV NODE_ENV=production
 
-EXPOSE 80
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 astro
 
-CMD ["nginx", "-g", "daemon off;"]
+COPY --from=builder --chown=astro:nodejs /app/dist ./dist
+COPY --from=builder --chown=astro:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=astro:nodejs /app/package.json ./package.json
+
+USER astro
+
+EXPOSE 4322
+
+ENV HOST=0.0.0.0
+ENV PORT=4322
+
+CMD ["npm", "run", "preview"]
