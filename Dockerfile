@@ -21,12 +21,10 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder --chown=astro:nodejs /app/dist ./dist
 COPY --from=builder --chown=astro:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=astro:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=astro:nodejs /app/astro.config.mjs ./astro.config.mjs
 
 USER astro
 
 EXPOSE 4322
 
-ENV HOST=0.0.0.0
-ENV PORT=4322
-
-CMD ["npm", "run", "preview"]
+CMD ["node_modules/.bin/astro", "preview", "--host", "0.0.0.0", "--port", "4322"]
