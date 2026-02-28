@@ -71,6 +71,52 @@ ls -la ~/.local/share/agentloop/agentloop.sock
 AGENTLOOP_SOCKET=~/.local/share/agentloop/agentloop.sock ./agentloop "hello"
 ```
 
+## CLI Hangs / Agent Produces No Output
+
+**Symptom:** `./agentloop "task"` hangs indefinitely — socket connects, session starts, but no text, tool events, or done/error arrives.
+
+**Possible causes and fixes:**
+
+### Pi subprocess fails silently
+
+Check the server logs for pi's stderr output (look for `[pi]` prefix):
+
+```bash
+# Server logs will show pi stderr as WARN level:
+# level=WARN msg="pi stderr" line="Cannot read properties of undefined..."
+```
+
+Pi startup errors appear in server logs before any agent events are emitted.
+
+### API credentials not reaching pi
+
+Pi runs in a sanitized environment — env vars with blocked prefixes are stripped before the subprocess starts. By default, `ANTHROPIC_` and `OPENAI_` prefixes are blocked (so `ANTHROPIC_API_KEY` is not passed through).
+
+- **If using API key auth:** Set your key in the config or use a provider that reads credentials from a file (e.g., Claude subscription via browser auth).
+- **If using Claude subscription (file-based auth):** No env var needed — pi reads credentials from its own config files.
+
+Check your `security.blocked_env_prefixes` config if you need to pass a custom env var to pi.
+
+### Pi process exits without emitting events
+
+If pi crashes before sending any events, the server detects the process exit and broadcasts `event.error`. Check server logs for:
+
+```
+level=ERROR msg="pi process exited unexpectedly"
+```
+
+**Verify pi works in isolation:**
+
+```bash
+(echo '{"type":"prompt","id":"test","message":"say hello"}'; sleep 10) | pi --mode rpc
+```
+
+You should see `message_update` events followed by `agent_end`. If you see `success:false` or no output, pi itself has an issue (wrong provider, missing credentials, wrong model).
+
+<Aside type="note">
+  The `message` field (not `text`) is the correct field for prompt commands in pi's RPC protocol. AgentLoop uses `message` internally — if you see pi errors about undefined properties, this is the most common cause.
+</Aside>
+
 ## Slack Bridge Is Silent
 
 ### Wrong Tokens
@@ -118,7 +164,7 @@ ALLOWED_USER_IDS=U12345678,U87654321,UNEWUSERID
 
 ```bash
 npm install -g @mariozechner/pi-coding-agent
-pi --version  # Should output 0.54.0
+pi --version  # Should output 0.54.0 or later
 ```
 
 ### Wrong Provider or Model

@@ -23,10 +23,10 @@ sequenceDiagram
     AC->>PB: Build prompt
     PB-->>AC: <memory> + <skills> + task
     AC->>Pi: Start subprocess + Prompt()
-    Pi-->>AC: event.text / event.tool_use
+    Pi-->>AC: message_update / tool_execution_start
     AC-->>S: Broadcast events
     S-->>C: Stream events
-    Pi-->>AC: done
+    Pi-->>AC: agent_end
     AC-->>SM: RunResult
     SM->>SM: Save to vault, update memory
 ```
@@ -58,21 +58,24 @@ Each session spawns a separate pi subprocess. Communication happens over stdin/s
 
 **Commands (Agent Core → pi):**
 
-| Command | Purpose |
-|---------|---------|
-| `prompt` | Send the initial task prompt |
-| `steer` | Redirect the agent to a new direction |
-| `abort` | Cancel the current task |
+| Command | Key Fields | Purpose |
+|---------|-----------|---------|
+| `prompt` | `message` | Send the initial task prompt |
+| `steer` | `message`, `streamingBehavior: "steer"` | Redirect the agent mid-task |
+| `abort` | — | Cancel the current task |
+| `extension_ui_response` | `id`, `confirmed`/`value`/`cancelled` | Reply to an HITL dialog request |
+
+Commands are sent as JSON lines to pi's stdin. The task text always goes in the `message` field (not `text`).
 
 **Events (pi → Agent Core):**
 
 | Event | Purpose |
 |-------|---------|
-| `text` | Text output chunk from the agent |
-| `tool_use` | A tool is about to execute |
-| `tool_result` | Tool execution result |
-| `done` | Task completed |
-| `error` | Task failed |
+| `message_update` | Text/thinking delta from the agent (contains `assistantMessageEvent.type: "text_delta"`) |
+| `tool_execution_start` | A tool is about to execute (`toolName`, `args`) |
+| `tool_execution_end` | Tool execution result (`toolName`, `result.content`, `isError`) |
+| `agent_end` | Task completed successfully |
+| `auto_retry_end` | Task ended after retries (`success: false` + `finalError` if failed) |
 | `extension_ui_request` | HITL approval needed (from extension) |
 
 ## Event Loop
@@ -81,16 +84,20 @@ The agent core runs a `select` loop that handles multiple channels simultaneousl
 
 ```go
 select {
-case <-doneCh:        // pi subprocess completed
-case <-sess.AbortCh(): // client sent task.abort
+case <-doneCh:          // agent_end or auto_retry_end received from pi events
+case <-b.Done():        // pi process exited (handles unexpected crashes)
+case <-sess.AbortCh():  // client sent task.abort
 case text := <-sess.SteerCh(): // client sent task.steer
-case <-ctx.Done():    // context cancelled (timeout, shutdown)
+case <-ctx.Done():      // context cancelled (timeout, shutdown)
 }
 ```
 
 - **Abort** closes the abort channel → agent core picks up → sends abort command to pi → session cleanup
 - **Steer** sends text on a buffered channel (capacity 5) → agent core picks up → sends steer command to pi
-- **Done** signals task completion → collect results → save to vault
+- **Done** (`doneCh`) signals task completion via `agent_end` event → collect results → save to vault
+- **b.Done()** signals pi process exit — if `doneCh` is not already closed, pi crashed unexpectedly → broadcast error
+
+Early failures (pi launch or first prompt) also call `OnError` before returning, so the client always receives either `event.done` or `event.error`.
 
 ## Key Types
 
