@@ -27,4 +27,4 @@ USER astro
 
 EXPOSE 4322
 
-CMD ["node_modules/.bin/astro", "preview", "--host", "0.0.0.0", "--port", "4322"]
+CMD ["node_modules/.bin/astro", "preview", "--host", "0.0.0.0", "--port", "4322", "--allowed-hosts", "docs.weelet.io"]
