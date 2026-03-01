@@ -40,12 +40,13 @@ description: Complete reference for all AgentLoop configuration fields, types, d
 
 | YAML Path | Go Type | Default | Description |
 |-----------|---------|---------|-------------|
-| `sessions.max_concurrent` | `int` | `3` | Max total active sessions across all users |
-| `sessions.max_per_user` | `int` | `1` | Max active sessions per user |
+| `sessions.max_concurrent` | `int` | `5` | Max total active sessions across all users |
+| `sessions.max_per_user` | `int` | `5` | Max active sessions per user |
 | `sessions.timeout_minutes` | `int` | `30` | Session timeout in minutes |
 | `sessions.max_token_budget` | `int` | `200000` | Max tokens per session |
 | `sessions.max_tool_calls` | `int` | `100` | Max tool calls per session |
 | `sessions.stuck_threshold` | `int` | `3` | Consecutive errors before stuck detection |
+| `sessions.evict_lru` | `bool` | `true` | When at capacity, abort the session with oldest last response instead of rejecting new requests |
 
 ## HITL
 
@@ -120,12 +121,13 @@ memory:
   max_context_tokens: 3000
   prompt_cache_ttl_minutes: 60
 sessions:
-  max_concurrent: 3
-  max_per_user: 1
+  max_concurrent: 5
+  max_per_user: 5
   timeout_minutes: 30
   max_token_budget: 200000
   max_tool_calls: 100
   stuck_threshold: 3
+  evict_lru: true
 hitl:
   always_pause_tools: [docker, git push, rm -r, curl, wget]
   timeout_seconds: 300

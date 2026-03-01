@@ -24,25 +24,26 @@ Starts an agent task.
 
 **Goes through agent:** Yes
 
-### `/abort`
+### `/abort [sessionId]`
 
-Aborts the user's currently running session.
+Aborts a running session. Accepts an optional session ID to target a specific session.
 
-**Example:**
+**Examples:**
 ```
-/abort
+/abort                          # abort the only running session, or pick from a list
+/abort sess-a1b2c3d4            # abort a specific session by ID
 ```
 
 **Behavior:**
-1. Calls `session.list` to find the user's running session
-2. Sends `task.abort` for that session
-3. Responds with confirmation
+- **With a session ID:** sends `task.abort` for that session immediately
+- **With one running session:** aborts it directly and confirms
+- **With multiple running sessions:** posts an ephemeral Block Kit list where each session has an **Abort** button — click the one you want to stop
 
 **Goes through agent:** Yes (task.abort RPC)
 
 ### `/sessions`
 
-Lists all active sessions for the current user.
+Lists all active sessions for the current user, with an **Abort** button on each row.
 
 **Example:**
 ```
@@ -51,8 +52,9 @@ Lists all active sessions for the current user.
 
 **Behavior:**
 1. Sends `session.list` to AgentLoop server
-2. Displays list with session ID, task description, and state
-3. Response is ephemeral (only visible to the user)
+2. Displays each session (ID, task description, state) with an inline **Abort** button
+3. Clicking Abort sends `task.abort` for that session and updates the message to confirm
+4. Response is ephemeral (only visible to the user)
 
 **Goes through agent:** Yes (session.list RPC)
 
