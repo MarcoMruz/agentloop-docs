@@ -130,6 +130,177 @@ Intercepts bash tool calls containing docker commands:
 - Reads `AGENTLOOP_DOCKER_BLOCKED_VOLS` for blocked volume mount paths
 - Blocks commands with unauthorized subcommands or dangerous volume mounts
 
+## Prompt Injection Protection ⭐ NEW
+
+AgentLoop v0.6+ includes comprehensive protection against prompt injection attacks from various sources.
+
+### Threat Model
+
+Prompt injection can occur when untrusted content is read from:
+- **Skills folder** — Malicious skill files attempting to extract secrets
+- **Node modules** — Compromised dependencies with injection payloads
+- **Email attachments** — Weaponized documents with embedded instructions
+- **Cloud files** — External documents from untrusted sources
+- **Fetch responses** — Network content with injection attempts
+- **Git repositories** — Malicious repos with crafted commit messages or files
+
+### Multi-Layer Defense
+
+```mermaid
+graph TD
+    Content["Untrusted Content"] --> GS["Go Security Layer"]
+    GS --> TE["TypeScript Extension"]
+    TE --> HITL["Human Approval"]
+    HITL --> Agent["Agent Execution"]
+    
+    subgraph "Go Layer (internal/security/injection.go)"
+        DR["Risk Detection<br/>DetectInjectionRisk()"]
+        VS["Source Validation<br/>ValidateToolCallSource()"] 
+        CS["Content Sanitization<br/>SanitizeContent()"]
+    end
+    
+    subgraph "Extension Layer (prompt-injection-guard.ts)"
+        PI["Pattern Interception<br/>Tool call analysis"]
+        AP["Approval Requests<br/>High-risk operations"]
+        WL["Whitelist Validation<br/>Path checking"]
+    end
+```
+
+### Risk Detection (`injection.go`)
+
+**Source Classification:**
+- `SourceSkill` → Medium risk (can execute code)
+- `SourceNodeModules` → High risk (external dependencies)
+- `SourceEmailAttachment` → High risk (external source)
+- `SourceCloudFile` → High risk (external source)
+- `SourceFetchResponse` → Medium risk (network content)
+- `SourceGitRepo` → Medium risk (potentially malicious repo)
+- `SourceUserInput` → Low risk (trusted source)
+
+**Detection Patterns:**
+```go
+blockedKeywords := []string{
+    "ignore previous instructions",
+    "forget everything above",
+    "act as if you are",
+    "pretend you are", 
+    "roleplay as",
+    "API_KEY", "SECRET", "TOKEN",
+}
+
+sensitivePatterns := []string{
+    `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b`, // emails
+    `sk-[a-zA-Z0-9]{48}`,                                   // OpenAI keys
+    `xoxb-[0-9]+-[0-9]+-[0-9]+-[a-zA-Z0-9]+`,              // Slack tokens
+    `\b[A-Fa-f0-9]{32,}\b`,                                 // hex keys
+}
+```
+
+**Risk Levels:**
+- **Low** → User input, whitelisted sources
+- **Medium** → Skills, git repos, contains blocked keywords  
+- **High** → External sources, sensitive patterns, oversized content
+- **Critical** → Multiple high-risk indicators
+
+### Content Sanitization
+
+`SanitizeContent()` automatically removes or masks sensitive data:
+- **Email addresses** → `[REDACTED]`
+- **API keys** → `[REDACTED]`
+- **IP addresses** → `[REDACTED]`
+- **Blocked keyword lines** → Removed entirely
+
+<Aside type="note">
+  Sanitization is applied to memory storage when `security.injection.sanitize_memory: true`.
+</Aside>
+
+### Whitelist-Based Protection
+
+```yaml
+security:
+  injection:
+    whitelist_sources:
+      - "~/projects"
+      - "~/agentloop-sandbox"
+      - "~/.config/agentloop"
+    require_approval:
+      - "skills/*"
+      - "node_modules/*" 
+      - "*/attachments/*"
+      - "cloud:*"
+      - "fetch:*"
+      - ".git/*"
+```
+
+### Multi-Tier Approval System
+
+**Owner Tier** (default): All high-risk operations require explicit user approval
+**Admin Tier**: Automated approval for medium-risk, manual for high-risk
+**Auto-Deny**: Automatically blocks all risky operations
+
+### Extension Enforcement (`prompt-injection-guard.ts`)
+
+The TypeScript extension provides real-time interception:
+
+**Tool Call Analysis:**
+- `read` operations from risky sources → Approval required
+- `bash` commands with injection patterns → Blocked
+- `write`/`edit` operations with suspicious content → Approval required
+
+**Network Request Detection:**
+```typescript
+// Blocks curl/wget from skills without approval
+if ((command.includes("curl") || command.includes("wget")) && 
+    ctx.currentContext?.includes("skill")) {
+  return { action: "request_permission" };
+}
+```
+
+**Dangerous Command Patterns:**
+- `curl ... | bash` → Critical risk
+- `eval $()` → Critical risk  
+- `rm -rf /` → Critical risk
+- `chmod 777` → High risk
+- `dd if=` → Critical risk
+
+### Configuration
+
+Full injection protection configuration:
+
+```yaml
+security:
+  injection:
+    enable_protection: true           # Master toggle
+    whitelist_sources:                # Allowed read paths  
+      - "~/projects"
+      - "~/agentloop-sandbox"
+    blocked_keywords:                 # Injection trigger words
+      - "ignore previous instructions"
+      - "forget everything above"
+      - "API_KEY"
+      - "SECRET"
+    sanitize_memory: true             # Apply sanitization to stored memory
+    require_approval:                 # Patterns requiring human approval
+      - "skills/*"
+      - "node_modules/*"
+      - "cloud:*"
+    approval_tier: "owner"            # "owner", "admin", "auto-deny"
+    max_content_length: 50000         # Max file size (50KB)
+    detection_threshold: 0.7          # Risk threshold (0.0-1.0)
+```
+
+### Environment Variables
+
+Extension configuration (set by Go orchestrator):
+- `AGENTLOOP_INJECTION_PROTECTION=true` — Enable/disable protection
+- `AGENTLOOP_WHITELIST_SOURCES=~/projects,~/sandbox` — Allowed paths
+- `AGENTLOOP_BLOCKED_KEYWORDS=ignore,forget,roleplay` — Injection triggers
+- `AGENTLOOP_MAX_CONTENT_LENGTH=50000` — Content size limit
+
+<Aside type="caution">
+  **Security Critical:** Modifying injection protection requires explicit approval. All changes to `internal/security/injection.go`, `injection_test.go`, and `extensions/prompt-injection-guard.ts` must be reviewed.
+</Aside>
+
 ## Socket Permissions
 
 The Unix socket is created with `0700` permissions (owner-only access). The server removes stale sockets on startup.
