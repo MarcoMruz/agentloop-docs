@@ -22,11 +22,11 @@ export default defineConfig({
         {
           icon: "github",
           label: "GitHub",
-          href: "https://github.com/user/agentloop",
+          href: "https://github.com/MarcoMruz/agentloop",
         },
       ],
       editLink: {
-        baseUrl: "https://github.com/user/agentloop-docs/edit/main/",
+        baseUrl: "https://github.com/MarcoMruz/agentloop-docs/edit/main/",
       },
       customCss: ["./src/styles/custom.css"],
       sidebar: [
