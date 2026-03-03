@@ -1,0 +1,670 @@
+---
+title: Zed Editor Configuration
+description: Detailed configuration options for optimizing AgentLoop integration with Zed editor.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Configuration Overview
+
+The AgentLoop Zed integration is highly configurable, allowing you to tailor the AI assistance to your specific needs. Configuration happens at three levels:
+
+1. **AgentLoop Server** (`agentloop.yaml`) - Core functionality and behavior
+2. **Zed Settings** (`settings.json`) - Editor-specific preferences
+3. **Environment Variables** - Runtime configuration
+
+## AgentLoop Server Configuration
+
+### Core Zed Settings
+
+Located in `~/.config/agentloop/agentloop.yaml`:
+
+```yaml
+zed:
+  # Enable ACP integration
+  acp_enabled: true
+  
+  # Context extraction settings
+  context_lines: 50                # Lines of context around cursor
+  max_file_size: 1048576          # Max file size to process (1MB)
+  max_context_characters: 100000   # Max total context length
+  
+  # File filtering
+  allowed_file_types:
+    - "*.rs"      # Rust
+    - "*.ts"      # TypeScript  
+    - "*.tsx"     # TypeScript React
+    - "*.js"      # JavaScript
+    - "*.jsx"     # JavaScript React
+    - "*.py"      # Python
+    - "*.go"      # Go
+    - "*.java"    # Java
+    - "*.kt"      # Kotlin
+    - "*.swift"   # Swift
+    - "*.rb"      # Ruby
+    - "*.php"     # PHP
+    - "*.c"       # C
+    - "*.cpp"     # C++
+    - "*.h"       # Header files
+    - "*.hpp"     # C++ headers
+    - "*.md"      # Markdown
+    - "*.json"    # JSON
+    - "*.yaml"    # YAML
+    - "*.yml"     # YAML
+    - "*.toml"    # TOML
+    - "*.xml"     # XML
+    - "*.html"    # HTML
+    - "*.css"     # CSS
+    - "*.scss"    # SCSS
+    - "*.sql"     # SQL
+    - "*.sh"      # Shell scripts
+    - "*.dockerfile" # Dockerfiles
+  
+  excluded_patterns:
+    # Build outputs
+    - "target/"
+    - "build/"
+    - "dist/"
+    - "out/"
+    - ".next/"
+    - ".nuxt/"
+    
+    # Dependencies
+    - "node_modules/"
+    - "vendor/"
+    - ".cargo/"
+    
+    # Version control
+    - ".git/"
+    - ".svn/"
+    - ".hg/"
+    
+    # IDE files
+    - ".vscode/"
+    - ".idea/"
+    - "*.swp"
+    - "*.swo"
+    
+    # Temporary files
+    - "*.log"
+    - "*.tmp"
+    - "*.cache"
+    - ".DS_Store"
+    - "Thumbs.db"
+    
+    # Sensitive files
+    - ".env"
+    - ".env.*"
+    - "secrets/"
+    - "*.key"
+    - "*.pem"
+  
+  # Git integration
+  git_integration: true
+  include_git_status: true
+  include_recent_commits: 5
+  include_current_branch: true
+  include_uncommitted_changes: true
+  
+  # Diagnostic integration
+  include_diagnostics: true
+  max_diagnostics_per_file: 10
+  diagnostic_severity_filter: ["error", "warning"] # ["error", "warning", "info", "hint"]
+  
+  # Performance tuning
+  context_cache_ttl_minutes: 30
+  file_watch_debounce_ms: 500
+  max_concurrent_extractions: 3
+```
+
+### Security Configuration
+
+```yaml
+security:
+  # Path restrictions for Zed integration
+  allowed_paths:
+    - ~/dev
+    - ~/projects
+    - ~/code
+    - ~/workspace
+    - /tmp
+    
+  # Prevent access to sensitive directories
+  blocked_paths:
+    - ~/.ssh
+    - ~/.config/credentials
+    - /etc/passwd
+    - /etc/shadow
+    
+  # Prompt injection protection
+  injection_protection:
+    enabled: true
+    max_content_length: 50000
+    approval_tier: "owner"        # "owner", "admin", "auto-deny"
+    
+    # Sources that require approval
+    require_approval:
+      - "node_modules/"
+      - ".env"
+      - "secrets/"
+      - "*.key"
+      - "credentials"
+      - "password"
+      
+    # Content that triggers security review
+    blocked_keywords:
+      - "ignore previous instructions"
+      - "system:"
+      - "<|im_start|>"
+      - "[INST]"
+      - "```system"
+      - "act as"
+      - "pretend"
+    
+    # Safe sources (never blocked)
+    whitelist_sources:
+      - "user_input"
+      - "git_commit"
+      - "cursor_selection"
+```
+
+### Memory and Performance
+
+```yaml
+memory:
+  # Profile settings
+  profile_entries_limit: 200
+  conversation_retention_days: 60
+  
+  # Caching
+  enable_caching: true
+  cache_ttl_minutes: 120
+  max_cache_size_mb: 100
+  
+  # Compaction for long conversations
+  compaction:
+    strategy: "rolling"           # "rolling", "facts", "topics"
+    max_entries: 2000
+    trigger_threshold: 0.8
+    preserve_recent_count: 50
+
+sessions:
+  # Concurrent session limits
+  max_concurrent: 8
+  max_per_user: 3
+  
+  # Timeouts
+  timeout_minutes: 45
+  idle_timeout_minutes: 15
+  
+  # Resource limits
+  token_budget: 150000
+  tool_call_limit: 100
+  max_output_length: 50000
+  
+  # Memory management
+  evict_lru: true
+  stuck_threshold_seconds: 180
+```
+
+## Zed Editor Configuration
+
+### Assistant Settings
+
+In Zed's `settings.json`:
+
+```json
+{
+  "assistant": {
+    "provider": "agentloop",
+    "agentloop": {
+      // Connection settings
+      "socket_path": "~/.local/share/agentloop/agentloop.sock",
+      "connection_timeout_ms": 5000,
+      "request_timeout_ms": 60000,
+      
+      // Model preferences
+      "model": "claude-sonnet-4-20250514",
+      "temperature": 0.1,
+      "max_tokens": 4000,
+      
+      // Context settings
+      "context_lines": 50,
+      "auto_context": true,
+      "include_project_structure": true,
+      "include_git_status": true,
+      "include_diagnostics": true,
+      "include_recent_changes": true,
+      
+      // UI preferences
+      "stream_responses": true,
+      "show_token_usage": true,
+      "show_timing_info": false,
+      
+      // Behavior
+      "auto_save_before_assist": true,
+      "confirm_destructive_actions": true,
+      "remember_conversation_context": true
+    }
+  },
+  
+  // Language model configuration
+  "language_models": {
+    "agentloop": {
+      "api_key": null  // Uses environment variable
+    }
+  },
+  
+  // Feature toggles
+  "features": {
+    "assistant": true,
+    "inline_assist": true,
+    "context_servers": true
+  }
+}
+```
+
+### Keyboard Shortcuts
+
+Customize in `keymap.json`:
+
+```json
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      // Main assistant panel
+      "cmd-shift-a": "assistant:toggle",
+      "cmd-shift-enter": "assistant:submit",
+      
+      // Inline assistance
+      "cmd-k": "assistant:inline_assist",
+      "cmd-shift-k": "assistant:inline_assist_selection",
+      
+      // Quick actions
+      "cmd-alt-e": "assistant:explain_selection",
+      "cmd-alt-r": "assistant:refactor_selection",
+      "cmd-alt-t": "assistant:generate_tests",
+      "cmd-alt-d": "assistant:generate_docs",
+      
+      // Context commands
+      "cmd-alt-c": "assistant:show_context",
+      "cmd-alt-p": "assistant:include_project",
+      "cmd-alt-g": "assistant:include_git_status"
+    }
+  },
+  {
+    "context": "Assistant",
+    "bindings": {
+      // Assistant panel navigation
+      "escape": "assistant:cancel",
+      "cmd-r": "assistant:regenerate",
+      "cmd-c": "assistant:copy_response",
+      "cmd-s": "assistant:save_conversation",
+      
+      // Response actions
+      "cmd-enter": "assistant:submit",
+      "shift-enter": "assistant:new_line",
+      "cmd-up": "assistant:previous_message",
+      "cmd-down": "assistant:next_message"
+    }
+  },
+  {
+    "context": "Terminal",
+    "bindings": {
+      // Terminal assistance
+      "cmd-alt-h": "assistant:help_with_error",
+      "cmd-alt-f": "assistant:fix_command"
+    }
+  }
+]
+```
+
+### Language-Specific Settings
+
+Customize behavior per language:
+
+```json
+{
+  "languages": {
+    "Rust": {
+      "assistant": {
+        "include_cargo_toml": true,
+        "include_lib_rs": true,
+        "max_context_files": 15,
+        "prefer_explicit_types": true,
+        "suggest_clippy_fixes": true
+      }
+    },
+    "TypeScript": {
+      "assistant": {
+        "include_package_json": true,
+        "include_tsconfig": true,
+        "max_context_files": 20,
+        "include_type_definitions": true,
+        "suggest_eslint_fixes": true
+      }
+    },
+    "Python": {
+      "assistant": {
+        "include_requirements": true,
+        "include_setup_py": true,
+        "include_pyproject_toml": true,
+        "max_context_files": 12,
+        "suggest_mypy_fixes": true
+      }
+    },
+    "Go": {
+      "assistant": {
+        "include_go_mod": true,
+        "include_go_sum": true,
+        "max_context_files": 10,
+        "prefer_standard_library": true
+      }
+    }
+  }
+}
+```
+
+## Environment Variables
+
+Override configuration at runtime:
+
+### Core Settings
+```bash
+# Configuration file location
+export AGENTLOOP_CONFIG="~/.config/agentloop/agentloop.yaml"
+
+# Log level override
+export AGENTLOOP_LOG_LEVEL="debug"  # debug, info, warn, error
+
+# Socket path override
+export AGENTLOOP_SOCKET="~/.local/share/agentloop/agentloop.sock"
+```
+
+### LLM Provider Settings
+```bash
+# Anthropic
+export ANTHROPIC_API_KEY="your-api-key"
+
+# OpenAI
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_ORG_ID="your-org-id"  # Optional
+
+# Azure OpenAI
+export AZURE_OPENAI_API_KEY="your-api-key"
+export AZURE_OPENAI_ENDPOINT="your-endpoint"
+export AZURE_OPENAI_DEPLOYMENT="your-deployment"
+
+# Local models (Ollama)
+export OLLAMA_BASE_URL="http://localhost:11434"
+export OLLAMA_MODEL="llama2"
+```
+
+### Zed-Specific Settings
+```bash
+# Context limits
+export ZED_CONTEXT_LINES="75"
+export ZED_MAX_FILE_SIZE="2097152"  # 2MB
+export ZED_MAX_CONTEXT_CHARS="150000"
+
+# Performance tuning
+export ZED_CACHE_TTL_MINUTES="60"
+export ZED_MAX_CONCURRENT="5"
+export ZED_REQUEST_TIMEOUT="90"
+
+# Feature toggles
+export ZED_GIT_INTEGRATION="true"
+export ZED_DIAGNOSTICS="true"
+export ZED_PROJECT_STRUCTURE="true"
+
+# Debug settings
+export ZED_DEBUG_CONTEXT="false"
+export ZED_DEBUG_TIMING="false"
+```
+
+## Advanced Configuration
+
+### Custom Context Providers
+
+Create custom context extraction for your projects:
+
+```yaml
+# In agentloop.yaml
+zed:
+  custom_context_providers:
+    # Rust projects
+    - name: "rust_project"
+      trigger_files: ["Cargo.toml"]
+      include_files:
+        - "Cargo.toml"
+        - "Cargo.lock"
+        - "src/lib.rs"
+        - "src/main.rs"
+        - "README.md"
+      exclude_patterns:
+        - "target/"
+      max_depth: 3
+    
+    # Node.js projects  
+    - name: "nodejs_project"
+      trigger_files: ["package.json"]
+      include_files:
+        - "package.json"
+        - "package-lock.json"
+        - "tsconfig.json"
+        - "src/index.ts"
+        - "README.md"
+      exclude_patterns:
+        - "node_modules/"
+        - "dist/"
+      max_depth: 2
+    
+    # Python projects
+    - name: "python_project"
+      trigger_files: ["pyproject.toml", "setup.py", "requirements.txt"]
+      include_files:
+        - "pyproject.toml"
+        - "setup.py"
+        - "requirements.txt"
+        - "src/__init__.py"
+        - "README.md"
+      exclude_patterns:
+        - "__pycache__/"
+        - ".venv/"
+        - "venv/"
+      max_depth: 3
+```
+
+### Project-Specific Overrides
+
+Override global settings per project by creating `.agentloop.yaml` in project root:
+
+```yaml
+# .agentloop.yaml (project-specific)
+zed:
+  context_lines: 100          # More context for complex projects
+  max_file_size: 5242880     # 5MB for projects with large files
+  
+  # Project-specific exclusions
+  excluded_patterns:
+    - "generated/"
+    - "vendor/"
+    - "third_party/"
+    - "*.pb.go"               # Generated protobuf files
+    
+  # Custom file types
+  allowed_file_types:
+    - "*.proto"
+    - "*.graphql"
+    - "*.gql"
+
+# Project-specific skills
+skills:
+  directories:
+    - "./.agentloop/skills"   # Local project skills
+    
+# Memory settings for this project
+memory:
+  profile_entries_limit: 500  # More memory for complex projects
+```
+
+### Performance Profiles
+
+Create different performance profiles for various use cases:
+
+```yaml
+# In agentloop.yaml
+profiles:
+  # Fast profile for quick questions
+  fast:
+    zed:
+      context_lines: 25
+      max_file_size: 524288    # 512KB
+      include_git_status: false
+      include_diagnostics: false
+    sessions:
+      timeout_minutes: 10
+      token_budget: 10000
+      
+  # Balanced profile (default)
+  balanced:
+    zed:
+      context_lines: 50
+      max_file_size: 1048576   # 1MB
+      include_git_status: true
+      include_diagnostics: true
+    sessions:
+      timeout_minutes: 30
+      token_budget: 100000
+      
+  # Comprehensive profile for complex tasks
+  comprehensive:
+    zed:
+      context_lines: 100
+      max_file_size: 5242880   # 5MB
+      include_git_status: true
+      include_diagnostics: true
+      include_project_structure: true
+    sessions:
+      timeout_minutes: 60
+      token_budget: 200000
+
+# Active profile
+active_profile: "balanced"
+```
+
+Switch profiles via environment variable:
+```bash
+export AGENTLOOP_PROFILE="fast"      # For quick questions
+export AGENTLOOP_PROFILE="comprehensive"  # For complex refactoring
+```
+
+## Validation and Testing
+
+### Configuration Validation
+
+Test your configuration:
+
+```bash
+# Validate configuration file
+agentloop config validate
+
+# Test connection with current settings
+agentloop config test-connection
+
+# Show effective configuration (with all overrides)
+agentloop config show --merged
+```
+
+### Performance Monitoring
+
+Monitor performance impact:
+
+```yaml
+# Enable performance metrics
+logging:
+  level: info
+  performance_metrics: true
+  context_extraction_timing: true
+  
+monitoring:
+  enable_metrics: true
+  metrics_interval_seconds: 60
+  log_slow_operations: true
+  slow_operation_threshold_ms: 5000
+```
+
+View metrics:
+```bash
+# Show recent performance metrics
+agentloop metrics show
+
+# Monitor real-time performance
+agentloop metrics monitor
+```
+
+## Troubleshooting Configuration
+
+<Aside type="tip">
+**Configuration Issues?** Use `agentloop config validate` to check for errors and `agentloop --debug` to see detailed configuration loading.
+</Aside>
+
+### Common Configuration Problems
+
+#### Large Context Timeouts
+```yaml
+# Reduce context size
+zed:
+  context_lines: 30           # Reduce from 50
+  max_file_size: 524288      # Reduce from 1MB
+  max_context_characters: 50000  # Reduce from 100K
+```
+
+#### Memory Usage Too High
+```yaml
+# Optimize memory usage
+memory:
+  enable_caching: false      # Disable caching temporarily
+  max_cache_size_mb: 50      # Reduce cache size
+sessions:
+  max_concurrent: 3          # Reduce concurrent sessions
+  evict_lru: true           # Enable aggressive eviction
+```
+
+#### Slow Context Extraction
+```yaml
+# Performance tuning
+zed:
+  file_watch_debounce_ms: 1000    # Increase debounce
+  max_concurrent_extractions: 1    # Serialize extractions
+  context_cache_ttl_minutes: 60    # Cache longer
+```
+
+### Debug Configuration
+
+Enable debug mode for configuration troubleshooting:
+
+```yaml
+logging:
+  level: debug
+  config_debug: true
+  context_debug: true
+  
+zed:
+  debug_context_extraction: true
+  log_excluded_files: true
+  log_timing_info: true
+```
+
+Then monitor debug logs:
+```bash
+tail -f ~/.local/share/agentloop/logs/agentloop.log | grep -E "(CONFIG|CONTEXT|DEBUG)"
+```
+
+## Next Steps
+
+With your configuration optimized, continue to:
+- [**Usage Guide**](/zed-editor/usage/) - Learn effective AI-assisted workflows
+- [**Custom Skills**](/zed-editor/custom-skills/) - Create project-specific assistance
+- [**Troubleshooting**](/zed-editor/troubleshooting/) - Solve common issues

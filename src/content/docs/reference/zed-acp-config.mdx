@@ -1,0 +1,331 @@
+---
+title: Zed ACP Configuration
+description: Configuration reference for AgentLoop Zed Assistant Context Protocol (ACP) integration.
+---
+
+## Overview
+
+The AgentLoop Zed integration uses the **Assistant Context Protocol (ACP)** to provide seamless AI assistance directly within the Zed editor. This integration is built on the Rust implementation of AgentLoop (`agentloop-rs`) with the `zed-acp` feature enabled.
+
+## Configuration File
+
+Configuration is managed via `agentloop.yaml` in `~/.config/agentloop/`:
+
+```yaml
+server:
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+  
+pi:
+  binary_path: pi
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  extensions_dir: ~/.local/share/agentloop/extensions
+
+vault:
+  path: ~/.local/share/agentloop/vault
+
+zed:
+  acp_enabled: true
+  context_lines: 50
+  max_file_size: 1048576  # 1MB
+  allowed_file_types:
+    - "*.rs"
+    - "*.ts"
+    - "*.js" 
+    - "*.py"
+    - "*.go"
+    - "*.md"
+    - "*.json"
+    - "*.yaml"
+    - "*.toml"
+  excluded_patterns:
+    - "target/"
+    - "node_modules/"
+    - ".git/"
+    - "*.log"
+
+memory:
+  profile_entries_limit: 100
+  conversation_retention_days: 30
+  enable_caching: true
+  cache_ttl_minutes: 60
+
+sessions:
+  max_concurrent: 10
+  max_per_user: 3
+  timeout_minutes: 30
+  token_budget: 100000
+
+security:
+  allowed_paths:
+    - ~/dev
+    - ~/projects
+    - /tmp
+  injection_protection:
+    enabled: true
+    max_content_length: 50000
+    approval_tier: "owner"
+    blocked_keywords:
+      - "ignore previous"
+      - "system:"
+      - "<|im_start|>"
+      - "[INST]"
+
+logging:
+  level: info
+  file: ~/.local/share/agentloop/logs/zed.log
+```
+
+## Configuration Sections
+
+### Zed-Specific Settings
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `zed.acp_enabled` | boolean | `true` | Enable ACP integration |
+| `zed.context_lines` | number | `50` | Lines of context around cursor |
+| `zed.max_file_size` | number | `1048576` | Max file size to process (bytes) |
+| `zed.allowed_file_types` | array | `["*.rs", "*.ts", ...]` | File patterns to include |
+| `zed.excluded_patterns` | array | `["target/", "node_modules/", ...]` | Patterns to exclude |
+
+### ACP Context Providers
+
+The Zed integration provides rich context to AgentLoop:
+
+- **Current file content** (with syntax highlighting)
+- **Selection or cursor context** (configurable line range)
+- **Project structure** (respecting excluded patterns)
+- **Git status** (modified files, current branch)
+- **Error diagnostics** (compiler errors, lints)
+- **Recent edit history** (last 10 changes)
+
+### Security Considerations
+
+All Zed context data goes through the same security validation as other AgentLoop inputs:
+
+- **Path validation** - only allowed paths can be accessed
+- **Content sanitization** - prompt injection protection
+- **File size limits** - prevents processing huge files
+- **HITL approval** - dangerous operations require confirmation
+
+## Installation
+
+### 1. Install AgentLoop Rust
+
+```bash
+# Clone and build agentloop-rs
+git clone git@github.com:MarcoMruz/agentloop-rs.git
+cd agentloop-rs
+cargo build --release --features zed-acp
+
+# Install binaries
+cargo install --path crates/agentloop-server --features zed-acp
+cargo install --path crates/agentloop-cli
+```
+
+### 2. Install Zed Extension
+
+```bash
+# Install from Zed extension marketplace
+# Search for "AgentLoop" and install
+
+# Or install locally (development)
+cd ~/.config/zed/extensions
+git clone git@github.com:MarcoMruz/zed-agentloop-extension.git agentloop
+```
+
+### 3. Configure Zed
+
+Add to your Zed `settings.json`:
+
+```json
+{
+  "assistant": {
+    "provider": "agentloop",
+    "agentloop": {
+      "socket_path": "~/.local/share/agentloop/agentloop.sock",
+      "model": "claude-sonnet-4-20250514",
+      "context_lines": 50
+    }
+  },
+  "language_models": {
+    "agentloop": {
+      "api_key": null
+    }
+  }
+}
+```
+
+### 4. Start AgentLoop Server
+
+```bash
+# Start the server with Zed ACP support
+agentloop-server --feature zed-acp
+
+# Or as a systemd service (recommended)
+sudo systemctl enable --now agentloop-server
+```
+
+## Usage in Zed
+
+### Assistant Panel
+
+1. **Open Assistant Panel**: `Cmd/Ctrl + Shift + A`
+2. **Select AgentLoop**: Choose from provider dropdown
+3. **Ask questions**: Type your request and press Enter
+4. **Context is automatic**: Current file and selection included
+
+### Context Commands
+
+- **`/context`** - Show what context will be sent
+- **`/project`** - Include full project structure
+- **`/git`** - Include git status and recent commits
+- **`/errors`** - Include all current diagnostics
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd/Ctrl + Shift + A` | Open Assistant Panel |
+| `Cmd/Ctrl + Enter` | Send message to AgentLoop |
+| `Escape` | Cancel current request |
+| `Cmd/Ctrl + K` | Quick ask (inline) |
+
+### Inline Assistance
+
+```rust
+// Select code and press Cmd+K, then:
+// "optimize this function"
+// "add error handling"
+// "write tests for this"
+fn example() {
+    // Your code here
+}
+```
+
+## Environment Variables
+
+For additional configuration, set these environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENTLOOP_CONFIG` | `~/.config/agentloop/agentloop.yaml` | Config file path |
+| `AGENTLOOP_SOCKET` | `~/.local/share/agentloop/agentloop.sock` | Unix socket path |
+| `AGENTLOOP_LOG_LEVEL` | `info` | Log level |
+| `ZED_ACP_TIMEOUT` | `30` | Request timeout (seconds) |
+| `ZED_ACP_MAX_CONTEXT` | `100000` | Max context characters |
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"Connection refused"**
+   - Ensure agentloop-server is running
+   - Check socket path in both configs match
+   - Verify permissions on socket file
+
+2. **"Context too large"**
+   - Reduce `zed.context_lines`
+   - Add more exclusion patterns
+   - Set lower `zed.max_file_size`
+
+3. **"Authentication failed"**
+   - Check pi provider credentials
+   - Verify model name is correct
+   - Test with `pi --version`
+
+### Debug Mode
+
+Enable debug logging for detailed information:
+
+```yaml
+logging:
+  level: debug
+  file: ~/.local/share/agentloop/logs/zed-debug.log
+```
+
+### Health Check
+
+Test the connection from command line:
+
+```bash
+# Check server status
+agentloop health
+
+# Test with simple task
+agentloop "hello world"
+```
+
+## Performance Tips
+
+- **Exclude large directories**: Add `target/`, `node_modules/`, `build/` to exclusions
+- **Limit context**: Reduce `context_lines` for better performance
+- **Use caching**: Enable `memory.enable_caching` for faster responses
+- **Optimize vault**: Run periodic compaction with `agentloop compact`
+
+## Migration from Other Providers
+
+If migrating from other AI providers in Zed:
+
+1. **Export chat history** (if supported)
+2. **Update settings.json** to use AgentLoop
+3. **Import custom prompts** as AgentLoop skills
+4. **Adjust keyboard shortcuts** as needed
+
+## Advanced Configuration
+
+### Custom Skills for Zed
+
+Create Zed-specific skills in `~/.local/share/agentloop/vault/skills/`:
+
+```markdown
+---
+name: zed-code-review
+description: Perform code review on selected code
+triggers:
+  - "review"
+  - "check code"
+  - "code review"
+---
+
+# Zed Code Review Skill
+
+When reviewing code in Zed:
+
+1. Analyze the selected code for:
+   - Logic errors and bugs
+   - Performance issues
+   - Style consistency
+   - Security vulnerabilities
+
+2. Check against project conventions:
+   - Language-specific best practices
+   - Naming conventions
+   - Documentation standards
+
+3. Provide actionable suggestions with line numbers
+4. Offer to fix issues directly if requested
+```
+
+### Integration with Git
+
+Enable git integration for better context:
+
+```yaml
+zed:
+  git_integration: true
+  include_git_status: true
+  include_recent_commits: 5
+  include_current_branch: true
+```
+
+## Future Features
+
+Planned enhancements for Zed integration:
+
+- **Multi-file editing**: Edit multiple files in one request
+- **Refactoring assistance**: Intelligent code transformations  
+- **Test generation**: Automatic test creation
+- **Documentation**: Auto-generate comments and docs
+- **Code search**: Semantic code search across project
+- **Collaboration**: Team-shared skills and context

@@ -1,0 +1,582 @@
+---
+title: Zed Editor Usage
+description: Master AI-assisted coding workflows with AgentLoop in Zed editor.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Getting Started with AgentLoop in Zed
+
+Once installed and configured, AgentLoop provides powerful AI assistance directly within your Zed workflow. This guide covers the most effective patterns and techniques.
+
+## Basic Workflows
+
+### 1. Assistant Panel
+
+The primary interface for interacting with AgentLoop:
+
+**Opening the Assistant Panel:**
+- **Keyboard**: `Cmd/Ctrl + Shift + A`
+- **Command Palette**: `Cmd/Ctrl + Shift + P` → "Assistant: Toggle"
+- **Menu**: View → Assistant Panel
+
+**Basic Usage:**
+1. Open the Assistant Panel
+2. Type your question or request
+3. Press `Enter` or `Cmd/Ctrl + Enter` to submit
+4. Watch the streaming response
+5. Apply suggested changes or ask follow-up questions
+
+### 2. Inline Assistance
+
+For quick, context-aware help without leaving the editor:
+
+**Inline Assist:**
+- **Keyboard**: `Cmd/Ctrl + K`
+- Select code (optional) and press the shortcut
+- Type your request in the inline prompt
+- Press `Enter` to get contextual suggestions
+
+**Selection-Based Assistance:**
+```rust
+// Select this function and press Cmd/Ctrl + K
+fn complex_calculation(data: &[f64]) -> Result<f64, Error> {
+    // Complex implementation here...
+}
+
+// Then ask: "optimize this function for better performance"
+```
+
+### 3. Context Commands
+
+Special commands that control what context AgentLoop sees:
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `/context` | Show current context | View what files/info will be included |
+| `/project` | Include project structure | Add file tree to context |
+| `/git` | Include git status | Add branch, changes, recent commits |
+| `/errors` | Include diagnostics | Add compiler errors and warnings |
+| `/clear` | Clear conversation | Start fresh conversation |
+
+## Advanced Workflows
+
+### Code Explanation and Documentation
+
+**Explain Complex Code:**
+```typescript
+// Select complex logic and ask:
+// "Explain this algorithm step by step"
+
+const calculateOptimalRoute = (graph: Graph, start: Node, end: Node) => {
+  const distances = new Map<Node, number>();
+  const previous = new Map<Node, Node | null>();
+  const unvisited = new Set(graph.nodes);
+  
+  // Dijkstra's algorithm implementation...
+};
+```
+
+**Generate Documentation:**
+```rust
+// Select function and ask: "generate comprehensive documentation"
+pub fn parse_config(path: &Path) -> Result<Config, ConfigError> {
+    // Implementation...
+}
+
+// Results in:
+/// Parses a configuration file from the specified path.
+///
+/// # Arguments
+/// * `path` - The path to the configuration file
+///
+/// # Returns
+/// * `Ok(Config)` - Successfully parsed configuration
+/// * `Err(ConfigError)` - Error occurred during parsing
+///
+/// # Examples
+/// ```rust
+/// let config = parse_config(Path::new("config.yaml"))?;
+/// ```
+```
+
+### Code Generation and Refactoring
+
+**Generate New Code:**
+Ask: "Create a REST API endpoint for user authentication"
+```rust
+// AgentLoop generates:
+#[post("/auth/login")]
+pub async fn login(
+    credentials: Json<LoginCredentials>,
+    data: Data<AppState>,
+) -> Result<HttpResponse, Error> {
+    // Authentication logic...
+}
+```
+
+**Refactor Existing Code:**
+```python
+# Select a large function and ask: "refactor this into smaller functions"
+def process_user_data(raw_data):
+    # 50+ lines of mixed logic
+    pass
+
+# Results in modular functions:
+def validate_user_data(raw_data): pass
+def sanitize_user_input(data): pass  
+def store_user_data(data): pass
+def process_user_data(raw_data): pass
+```
+
+**Extract Common Patterns:**
+```javascript
+// Select repeated code and ask: "extract this into a reusable utility"
+const users = response.data.filter(item => item.active)
+                          .map(user => ({ id: user.id, name: user.name }))
+                          .sort((a, b) => a.name.localeCompare(b.name));
+
+// Becomes:
+const processUsers = (data) => 
+  data.filter(item => item.active)
+      .map(user => ({ id: user.id, name: user.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+```
+
+### Testing and Quality Assurance
+
+**Generate Unit Tests:**
+```go
+// Select function and ask: "generate comprehensive unit tests"
+func CalculateTax(income float64, rate float64) float64 {
+    if income <= 0 || rate < 0 || rate > 1 {
+        return 0
+    }
+    return income * rate
+}
+
+// Results in:
+func TestCalculateTax(t *testing.T) {
+    tests := []struct {
+        name     string
+        income   float64
+        rate     float64
+        expected float64
+    }{
+        {"normal case", 1000.0, 0.2, 200.0},
+        {"zero income", 0.0, 0.2, 0.0},
+        {"negative income", -100.0, 0.2, 0.0},
+        {"negative rate", 1000.0, -0.1, 0.0},
+        {"rate too high", 1000.0, 1.5, 0.0},
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            result := CalculateTax(tt.income, tt.rate)
+            assert.Equal(t, tt.expected, result)
+        })
+    }
+}
+```
+
+**Code Review and Quality:**
+Ask: "review this code for potential issues"
+- Security vulnerabilities
+- Performance bottlenecks  
+- Code style violations
+- Logic errors
+- Missing error handling
+
+### Error Resolution
+
+**Compiler Error Assistance:**
+When you have compilation errors, AgentLoop automatically includes diagnostic context:
+
+```rust
+error[E0308]: mismatched types
+ --> src/main.rs:42:5
+  |
+42|     Ok(result)
+  |     ^^^^^^^^^^ expected `Result<String, Error>`, found `Result<i32, Error>`
+```
+
+Ask: "How do I fix this type mismatch error?"
+AgentLoop sees the error and surrounding code, providing specific solutions.
+
+**Runtime Error Debugging:**
+```python
+# Paste error and ask: "help me debug this error"
+Traceback (most recent call last):
+  File "main.py", line 15, in <module>
+    result = process_data(user_input)
+  File "main.py", line 8, in process_data
+    return data.strip().upper()
+AttributeError: 'NoneType' object has no attribute 'strip'
+```
+
+AgentLoop provides debugging steps and suggests fixes like null checks and proper error handling.
+
+## Context-Aware Features
+
+### Automatic Context Inclusion
+
+AgentLoop automatically includes relevant context:
+
+**File Context:**
+- Current file content and cursor position
+- Related imports and dependencies
+- Type definitions and interfaces
+
+**Project Context:**
+- Project structure and configuration files
+- Build files (Cargo.toml, package.json, etc.)
+- README and documentation
+
+**Git Context:**
+- Current branch and recent commits
+- Staged and unstaged changes
+- Merge conflicts (if any)
+
+**Diagnostic Context:**
+- Compiler errors and warnings
+- Linter suggestions
+- Type checker output
+
+### Manual Context Control
+
+**Include Specific Files:**
+```
+/include src/models.rs
+/include tests/integration_tests.rs
+
+Now help me write a new test for the User model
+```
+
+**Include Project Structure:**
+```
+/project
+
+Based on this project structure, where should I add a new authentication module?
+```
+
+**Include Git Information:**
+```
+/git
+
+Write a commit message for these changes
+```
+
+## Language-Specific Workflows
+
+### Rust Development
+
+**Common Patterns:**
+```rust
+// Error handling improvement
+// Ask: "improve error handling in this function"
+fn read_config() -> Option<Config> {
+    let contents = std::fs::read_to_string("config.toml").ok()?;
+    toml::from_str(&contents).ok()
+}
+
+// Becomes:
+fn read_config() -> Result<Config, ConfigError> {
+    let contents = std::fs::read_to_string("config.toml")
+        .map_err(ConfigError::IoError)?;
+    toml::from_str(&contents)
+        .map_err(ConfigError::ParseError)
+}
+
+// Performance optimization
+// Ask: "optimize this for better performance"
+fn find_users(users: Vec<User>, criteria: &str) -> Vec<User> {
+    users.into_iter()
+        .filter(|u| u.name.contains(criteria))
+        .collect()
+}
+```
+
+**Rust-Specific Commands:**
+- "Add proper error handling with `?` operator"
+- "Convert this to use async/await"
+- "Add lifetime annotations"
+- "Implement Display trait for this struct"
+- "Add serde serialization"
+- "Write property-based tests with quickcheck"
+
+### TypeScript/JavaScript
+
+**React Component Development:**
+```tsx
+// Ask: "convert this to a TypeScript React component with proper types"
+function UserProfile({ user }) {
+  return (
+    <div>
+      <h1>{user.name}</h1>
+      <p>{user.email}</p>
+    </div>
+  );
+}
+
+// Results in:
+interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+interface UserProfileProps {
+  user: User;
+}
+
+const UserProfile: React.FC<UserProfileProps> = ({ user }) => {
+  return (
+    <div>
+      <h1>{user.name}</h1>
+      <p>{user.email}</p>
+    </div>
+  );
+};
+```
+
+**API Integration:**
+```typescript
+// Ask: "create a type-safe API client for this endpoint"
+// POST /api/users { name: string, email: string }
+// Returns: { id: string, name: string, email: string, created_at: string }
+
+interface CreateUserRequest {
+  name: string;
+  email: string;
+}
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  created_at: string;
+}
+
+class UserAPI {
+  async createUser(data: CreateUserRequest): Promise<User> {
+    const response = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to create user: ${response.statusText}`);
+    }
+    
+    return response.json();
+  }
+}
+```
+
+### Python Development
+
+**Data Processing:**
+```python
+# Ask: "optimize this data processing pipeline"
+def process_data(data):
+    result = []
+    for item in data:
+        if item['status'] == 'active':
+            processed = {
+                'id': item['id'],
+                'value': item['value'] * 2,
+                'category': item['category'].upper()
+            }
+            result.append(processed)
+    return result
+
+# Becomes:
+from typing import List, Dict, Any
+
+def process_data(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {
+            'id': item['id'],
+            'value': item['value'] * 2,
+            'category': item['category'].upper()
+        }
+        for item in data
+        if item['status'] == 'active'
+    ]
+```
+
+## Productivity Tips
+
+### Keyboard-First Workflow
+
+**Efficient Shortcuts:**
+```
+Cmd/Ctrl + Shift + A → Open Assistant
+Cmd/Ctrl + K → Inline assist
+/context → Check what will be included
+/project → Add project structure
+Escape → Cancel/close
+Cmd/Ctrl + R → Regenerate response
+```
+
+### Conversation Context
+
+**Build on Previous Responses:**
+```
+You: "Create a user authentication system"
+AgentLoop: [Provides auth system implementation]
+
+You: "Add password reset functionality"
+AgentLoop: [Extends the existing auth system]
+
+You: "Add rate limiting to prevent brute force"
+AgentLoop: [Further enhances the system]
+```
+
+**Reference Earlier Code:**
+```
+You: "Refer to the UserService class from earlier and add validation"
+```
+
+### Batch Operations
+
+**Multiple File Changes:**
+```
+You: "Update all the API endpoints to use the new error handling pattern from models.rs"
+```
+
+AgentLoop can:
+- Analyze the error handling pattern
+- Find all relevant API files
+- Apply consistent changes across files
+- Maintain code style and conventions
+
+## Best Practices
+
+### Effective Prompting
+
+<Aside type="tip">
+**Be Specific**: Instead of "fix this code", try "optimize this function for better memory usage" or "add error handling for network failures".
+</Aside>
+
+**Good Prompts:**
+- "Refactor this 200-line function into smaller, single-purpose functions"
+- "Add comprehensive error handling with custom error types"  
+- "Generate integration tests that cover both success and failure cases"
+- "Optimize this database query to reduce N+1 problems"
+
+**Less Effective Prompts:**
+- "Make this better"
+- "Fix the code"  
+- "Add some tests"
+- "Optimize"
+
+### Context Management
+
+**Use Context Commands:**
+```
+/project    # For architectural questions
+/git        # For commit messages or merge conflicts
+/errors     # When debugging compilation issues
+/clear      # To start fresh on new topics
+```
+
+**Provide Relevant Background:**
+```
+// When asking about database code:
+"This is a high-traffic e-commerce application using PostgreSQL. We need to optimize for read performance."
+
+// When asking about error handling:
+"This is a CLI tool that should provide helpful error messages to users."
+```
+
+### Performance Optimization
+
+**Keep Context Focused:**
+- Select only relevant code sections
+- Use `/context` to verify what's included
+- Clear conversation when switching topics
+
+**Batch Similar Requests:**
+```
+"Review these three functions for security issues:
+1. user_login()
+2. validate_token()  
+3. refresh_session()"
+```
+
+## Troubleshooting Common Issues
+
+### Response Quality Issues
+
+**Problem**: Generic or irrelevant responses
+**Solution**: 
+- Provide more specific context
+- Use `/context` to check what AgentLoop sees
+- Include relevant background information
+
+**Problem**: Code doesn't match project style
+**Solution**:
+- Include style guide or linting configuration
+- Reference existing code patterns
+- Ask explicitly about style preferences
+
+### Performance Issues
+
+**Problem**: Slow responses
+**Solution**:
+- Reduce context with smaller selections
+- Use `/clear` to reset conversation
+- Check configuration limits
+
+**Problem**: Context too large errors  
+**Solution**:
+- Select smaller code sections
+- Use `excluded_patterns` in configuration
+- Focus on specific files/functions
+
+### Integration Issues
+
+**Problem**: Context missing expected information
+**Solution**:
+- Verify file types are in `allowed_file_types`
+- Check `excluded_patterns` configuration
+- Use manual context commands
+
+## Advanced Usage Patterns
+
+### Multi-Step Refactoring
+
+1. **Analyze**: "Analyze this codebase architecture and identify areas for improvement"
+2. **Plan**: "Create a refactoring plan to address the identified issues"
+3. **Implement**: "Start with the data layer refactoring from the plan"
+4. **Test**: "Generate tests for the refactored code"
+5. **Iterate**: "Continue with the service layer changes"
+
+### Code Migration
+
+```
+You: "Help me migrate this class from Java to Rust"
+[Paste Java code]
+
+AgentLoop: [Analyzes Java patterns and provides idiomatic Rust equivalent]
+
+You: "Now add proper error handling using Rust patterns"
+[Further refinement]
+```
+
+### Documentation Generation
+
+```
+You: "/project Generate comprehensive API documentation for all public functions"
+
+AgentLoop: [Analyzes project structure and generates documentation covering all public APIs with examples]
+```
+
+## Next Steps
+
+Now that you understand the core usage patterns, explore:
+- [**Custom Skills**](/zed-editor/custom-skills/) - Create project-specific AI assistance
+- [**Troubleshooting**](/zed-editor/troubleshooting/) - Solve common issues and optimize performance
+- [**Configuration**](/zed-editor/configuration/) - Fine-tune your setup for optimal results

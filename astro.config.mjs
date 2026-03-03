@@ -77,6 +77,10 @@ export default defineConfig({
               label: "Connect a New Client",
               slug: "tutorials/connect-a-new-client",
             },
+            {
+              label: "Zed Editor Integration",
+              slug: "tutorials/zed-integration",
+            },
           ],
         },
         {
@@ -93,6 +97,18 @@ export default defineConfig({
             { label: "HITL in Slack", slug: "slack-bridge/hitl-in-slack" },
             { label: "Slash Commands", slug: "slack-bridge/slash-commands" },
             { label: "Extending", slug: "slack-bridge/extending" },
+          ],
+        },
+        {
+          label: "Zed Editor",
+          badge: { text: "ACP", variant: "tip" },
+          items: [
+            { label: "Overview", slug: "zed-editor/overview" },
+            { label: "Installation", slug: "zed-editor/installation" },
+            { label: "Configuration", slug: "zed-editor/configuration" },
+            { label: "Usage", slug: "zed-editor/usage" },
+            { label: "Custom Skills", slug: "zed-editor/custom-skills" },
+            { label: "Troubleshooting", slug: "zed-editor/troubleshooting" },
           ],
         },
         {
@@ -118,6 +134,14 @@ export default defineConfig({
             {
               label: "Slack Bridge Types",
               slug: "reference/slack-bridge-types",
+            },
+            {
+              label: "Zed ACP Config",
+              slug: "reference/zed-acp-config",
+            },
+            {
+              label: "Zed ACP Types",
+              slug: "reference/zed-acp-types",
             },
           ],
         },

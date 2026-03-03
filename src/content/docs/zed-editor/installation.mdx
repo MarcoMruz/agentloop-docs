@@ -1,0 +1,588 @@
+---
+title: Zed Editor Installation
+description: Step-by-step guide to install and set up AgentLoop integration with Zed editor.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Prerequisites
+
+Before installing the AgentLoop Zed integration, ensure you have:
+
+### Required Software
+- **Zed Editor 0.100.0+** - [Download from zed.dev](https://zed.dev)
+- **Rust 1.70+** - Install via [rustup.rs](https://rustup.rs/)
+- **Node.js 18+** - For the pi coding agent
+- **Git** - For project context features
+
+### LLM Provider
+Choose one:
+- **Anthropic Claude** - Recommended (get API key from [console.anthropic.com](https://console.anthropic.com))
+- **OpenAI GPT-4** - Good alternative ([platform.openai.com](https://platform.openai.com))
+- **Local models** - Via Ollama or other providers
+
+### Verify Prerequisites
+
+```bash
+# Check Zed version
+zed --version
+# Should be 0.100.0 or higher
+
+# Check Rust
+rustc --version
+# Should be 1.70.0 or higher
+
+# Check Node.js
+node --version
+# Should be v18.0.0 or higher
+
+# Check Git
+git --version
+# Any recent version works
+```
+
+## Step 1: Install AgentLoop Rust
+
+### Option A: From Source (Recommended)
+
+```bash
+# Clone the repository
+git clone git@github.com:MarcoMruz/agentloop-rs.git
+cd agentloop-rs
+
+# Build with Zed ACP support
+cargo build --release --features zed-acp
+
+# Install globally
+cargo install --path crates/agentloop-server --features zed-acp
+cargo install --path crates/agentloop-cli
+
+# Verify installation
+agentloop-server --version
+agentloop --version
+```
+
+### Option B: Pre-built Binaries (Coming Soon)
+
+```bash
+# Download from GitHub releases
+curl -L https://github.com/MarcoMruz/agentloop-rs/releases/latest/download/agentloop-rs-linux.tar.gz | tar xz
+sudo mv agentloop-* /usr/local/bin/
+
+# Or via Homebrew (macOS)
+brew install MarcoMruz/tap/agentloop-rs
+```
+
+## Step 2: Install Pi Coding Agent
+
+```bash
+# Install pi globally
+npm install -g @mariozechner/pi-coding-agent@latest
+
+# Verify installation
+pi --version
+# Should show v0.54.0 or higher
+```
+
+## Step 3: Configure AgentLoop
+
+### Create Configuration Directory
+
+```bash
+mkdir -p ~/.config/agentloop
+mkdir -p ~/.local/share/agentloop/{vault,logs}
+```
+
+### Create Configuration File
+
+Create `~/.config/agentloop/agentloop.yaml`:
+
+```yaml
+# Core server configuration
+server:
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+
+# Pi coding agent configuration
+pi:
+  binary_path: pi
+  provider: anthropic  # or 'openai', 'ollama', etc.
+  model: claude-sonnet-4-20250514
+  extensions_dir: ~/.local/share/agentloop/extensions
+
+# Data storage
+vault:
+  path: ~/.local/share/agentloop/vault
+
+# Zed-specific settings
+zed:
+  acp_enabled: true
+  context_lines: 50
+  max_file_size: 1048576  # 1MB
+  allowed_file_types:
+    - "*.rs"
+    - "*.ts"
+    - "*.tsx"
+    - "*.js"
+    - "*.jsx"
+    - "*.py"
+    - "*.go"
+    - "*.java"
+    - "*.kt"
+    - "*.swift"
+    - "*.rb"
+    - "*.php"
+    - "*.c"
+    - "*.cpp"
+    - "*.h"
+    - "*.hpp"
+    - "*.md"
+    - "*.json"
+    - "*.yaml"
+    - "*.yml"
+    - "*.toml"
+    - "*.xml"
+    - "*.html"
+    - "*.css"
+    - "*.scss"
+    - "*.sql"
+  excluded_patterns:
+    - "target/"
+    - "node_modules/"
+    - ".git/"
+    - "build/"
+    - "dist/"
+    - "out/"
+    - ".vscode/"
+    - ".idea/"
+    - "*.log"
+    - "*.tmp"
+    - ".DS_Store"
+    - "Thumbs.db"
+  git_integration: true
+  include_git_status: true
+  include_recent_commits: 5
+  include_current_branch: true
+
+# Memory system
+memory:
+  profile_entries_limit: 100
+  conversation_retention_days: 30
+  enable_caching: true
+  cache_ttl_minutes: 60
+  compaction:
+    strategy: "rolling"
+    max_entries: 1000
+    trigger_threshold: 0.8
+
+# Session management
+sessions:
+  max_concurrent: 5
+  max_per_user: 2
+  timeout_minutes: 30
+  token_budget: 100000
+  tool_call_limit: 50
+  stuck_threshold_seconds: 120
+  evict_lru: true
+
+# Human-in-the-Loop settings
+hitl:
+  always_pause_tools: []
+  timeout_seconds: 300
+  timeout_action: "deny"
+
+# Security configuration
+security:
+  allowed_paths:
+    - ~/dev
+    - ~/projects
+    - ~/code
+    - /tmp
+  blocked_env_prefixes:
+    - "AWS_"
+    - "GITHUB_"
+    - "GITLAB_"
+    - "SSH_"
+  blocked_cidrs:
+    - "169.254.0.0/16"  # AWS metadata
+    - "10.0.0.0/8"      # Private networks
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  docker:
+    allowed_subcommands:
+      - "ps"
+      - "logs"
+      - "images"
+      - "build"
+      - "compose"
+      - "inspect"
+      - "stats"
+    blocked_volume_paths:
+      - "/etc"
+      - "/var"
+      - "/root"
+      - "/proc"
+      - "/sys"
+      - "/dev"
+  injection_protection:
+    enabled: true
+    max_content_length: 50000
+    approval_tier: "owner"
+    whitelist_sources:
+      - "user_input"
+      - "git_commit"
+    blocked_keywords:
+      - "ignore previous"
+      - "system:"
+      - "<|im_start|>"
+      - "[INST]"
+      - "```system"
+    require_approval:
+      - "node_modules/"
+      - ".env"
+      - "secrets"
+    sanitize_memory: true
+
+# Skills configuration
+skills:
+  directories:
+    - ~/.local/share/agentloop/vault/skills
+    - ~/.local/share/agentloop/skills
+
+# Logging
+logging:
+  level: info
+  file: ~/.local/share/agentloop/logs/agentloop.log
+```
+
+### Set Environment Variables
+
+Add to your shell profile (`~/.bashrc`, `~/.zshrc`, `~/.profile`):
+
+```bash
+# LLM Provider API Key
+export ANTHROPIC_API_KEY="your-anthropic-api-key-here"
+# OR for OpenAI:
+# export OPENAI_API_KEY="your-openai-api-key-here"
+
+# AgentLoop configuration (optional)
+export AGENTLOOP_CONFIG="~/.config/agentloop/agentloop.yaml"
+export AGENTLOOP_LOG_LEVEL="info"
+
+# Reload your shell
+source ~/.zshrc  # or ~/.bashrc
+```
+
+<Aside type="caution">
+**API Key Security**: Never commit API keys to version control. Consider using a secure credential manager or environment-specific configuration.
+</Aside>
+
+## Step 4: Install Zed Extension
+
+### Option A: From Extension Marketplace (Coming Soon)
+
+Once available, install from within Zed:
+1. Open Zed
+2. Press `Cmd/Ctrl + Shift + P` to open command palette
+3. Type "Extensions: Install Extension"
+4. Search for "AgentLoop" and install
+
+### Option B: Manual Installation (Current)
+
+```bash
+# Create extensions directory
+mkdir -p ~/.config/zed/extensions
+
+# Clone the extension
+cd ~/.config/zed/extensions
+git clone git@github.com:MarcoMruz/zed-agentloop-extension.git agentloop
+
+# Or download a release
+curl -L https://github.com/MarcoMruz/zed-agentloop-extension/releases/latest/download/extension.tar.gz | tar xz
+```
+
+## Step 5: Configure Zed
+
+### Update Zed Settings
+
+Open Zed settings (`Cmd/Ctrl + ,` or `zed: open settings`) and add:
+
+```json
+{
+  "assistant": {
+    "provider": "agentloop",
+    "agentloop": {
+      "socket_path": "~/.local/share/agentloop/agentloop.sock",
+      "model": "claude-sonnet-4-20250514",
+      "context_lines": 50,
+      "auto_context": true,
+      "include_project_structure": true,
+      "include_git_status": true,
+      "include_diagnostics": true
+    }
+  },
+  "language_models": {
+    "agentloop": {
+      "api_key": null
+    }
+  },
+  "features": {
+    "assistant": true
+  }
+}
+```
+
+### Optional: Keyboard Shortcuts
+
+Add to your `keymap.json`:
+
+```json
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "cmd-shift-a": "assistant:toggle",
+      "cmd-k": "assistant:inline_assist",
+      "cmd-enter": "assistant:submit"
+    }
+  },
+  {
+    "context": "Assistant",
+    "bindings": {
+      "escape": "assistant:cancel",
+      "cmd-r": "assistant:regenerate"
+    }
+  }
+]
+```
+
+## Step 6: Start AgentLoop Server
+
+### Option A: Manual Start (Development)
+
+```bash
+# Start the server in a terminal
+agentloop-server --feature zed-acp
+
+# In another terminal, verify it's running
+agentloop health
+```
+
+### Option B: System Service (Production)
+
+#### Linux (systemd)
+
+```bash
+# Create service file
+sudo tee /etc/systemd/system/agentloop-server.service << EOF
+[Unit]
+Description=AgentLoop Server
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+Group=$USER
+ExecStart=$HOME/.cargo/bin/agentloop-server --feature zed-acp
+Restart=always
+RestartSec=5
+Environment=HOME=$HOME
+Environment=ANTHROPIC_API_KEY=your-api-key-here
+Environment=AGENTLOOP_CONFIG=$HOME/.config/agentloop/agentloop.yaml
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable --now agentloop-server
+
+# Check status
+sudo systemctl status agentloop-server
+```
+
+#### macOS (launchd)
+
+```bash
+# Create launch agent
+mkdir -p ~/Library/LaunchAgents
+
+cat > ~/Library/LaunchAgents/com.agentloop.server.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.agentloop.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$HOME/.cargo/bin/agentloop-server</string>
+        <string>--feature</string>
+        <string>zed-acp</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>$HOME</string>
+        <key>ANTHROPIC_API_KEY</key>
+        <string>your-api-key-here</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>WorkingDirectory</key>
+    <string>$HOME</string>
+</dict>
+</plist>
+EOF
+
+# Load and start
+launchctl load ~/Library/LaunchAgents/com.agentloop.server.plist
+launchctl start com.agentloop.server
+
+# Check status
+launchctl list | grep agentloop
+```
+
+## Step 7: Test Installation
+
+### Basic Connectivity Test
+
+```bash
+# Test server health
+agentloop health
+
+# Test with simple task
+agentloop "hello world"
+```
+
+### Test in Zed
+
+1. **Open a project in Zed**
+2. **Open Assistant Panel** (`Cmd/Ctrl + Shift + A`)
+3. **Select AgentLoop** from the provider dropdown
+4. **Ask a simple question**: "What files are in this project?"
+5. **Verify response** includes project context
+
+### Test Context Commands
+
+In the Assistant Panel, try:
+- `/context` - Shows what context will be included
+- `/project` - Lists project structure
+- `/git` - Shows git status
+- `/errors` - Lists current diagnostics
+
+## Troubleshooting Installation
+
+### Common Issues
+
+#### "Command not found: agentloop-server"
+```bash
+# Add Cargo bin to PATH
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+#### "Failed to connect to socket"
+```bash
+# Check if server is running
+ps aux | grep agentloop-server
+
+# Check socket exists
+ls -la ~/.local/share/agentloop/agentloop.sock
+
+# Check permissions
+chmod 700 ~/.local/share/agentloop/agentloop.sock
+```
+
+#### "Authentication failed"
+```bash
+# Verify API key is set
+echo $ANTHROPIC_API_KEY
+
+# Test pi directly
+echo "hello" | pi
+```
+
+#### "Extension not found in Zed"
+```bash
+# Check extension directory
+ls ~/.config/zed/extensions/
+
+# Check Zed logs
+tail -f ~/.config/zed/logs/Zed.log
+```
+
+### Debug Mode
+
+Enable debug logging:
+
+```yaml
+# In agentloop.yaml
+logging:
+  level: debug
+  file: ~/.local/share/agentloop/logs/debug.log
+```
+
+Then monitor logs:
+
+```bash
+tail -f ~/.local/share/agentloop/logs/debug.log
+```
+
+### Verify Installation
+
+Run the full verification script:
+
+```bash
+#!/bin/bash
+
+echo "=== AgentLoop Zed Installation Verification ==="
+
+# Check binaries
+echo "✓ Checking binaries..."
+which agentloop-server || echo "❌ agentloop-server not found"
+which agentloop || echo "❌ agentloop not found"
+which pi || echo "❌ pi not found"
+
+# Check configuration
+echo "✓ Checking configuration..."
+test -f ~/.config/agentloop/agentloop.yaml || echo "❌ Config file missing"
+
+# Check API key
+echo "✓ Checking API key..."
+test -n "$ANTHROPIC_API_KEY" || echo "❌ ANTHROPIC_API_KEY not set"
+
+# Check socket connection
+echo "✓ Testing connection..."
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock 2>/dev/null || \
+  echo "❌ Cannot connect to server"
+
+# Check Zed extension
+echo "✓ Checking Zed extension..."
+test -d ~/.config/zed/extensions/agentloop || echo "❌ Zed extension not found"
+
+echo "=== Verification Complete ==="
+```
+
+## Next Steps
+
+<Aside type="tip">
+**Installation complete!** Continue with [Configuration](/zed-editor/configuration/) to customize your setup, or jump straight to [Usage](/zed-editor/usage/) to start coding with AI assistance.
+</Aside>
+
+### Recommended Next Steps
+
+1. **[Configure your setup](/zed-editor/configuration/)** - Customize behavior and preferences
+2. **[Learn the usage patterns](/zed-editor/usage/)** - Master the AI-assisted workflow
+3. **[Create custom skills](/zed-editor/custom-skills/)** - Add project-specific assistance
+4. **[Join the community](https://github.com/MarcoMruz/agentloop-rs)** - Get help and share improvements
+
+### Optional Enhancements
+
+- **Install additional LLM providers** for model comparison
+- **Set up automatic updates** for binaries and extensions
+- **Configure backup and sync** for your vault and skills
+- **Integrate with CI/CD** for automated code review

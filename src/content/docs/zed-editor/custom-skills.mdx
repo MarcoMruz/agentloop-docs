@@ -1,0 +1,762 @@
+---
+title: Custom Skills for Zed
+description: Create project-specific AI assistance with custom AgentLoop skills for Zed editor.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Overview
+
+Custom skills allow you to create specialized AI assistance tailored to your specific projects, coding patterns, and workflows in Zed. Skills extend AgentLoop's capabilities with domain-specific knowledge and context-aware behaviors.
+
+## Skill Basics
+
+### What is a Skill?
+
+A skill is a specialized instruction set that:
+- Triggers based on keywords or context
+- Provides domain-specific knowledge
+- Follows project conventions
+- Includes relevant examples and patterns
+
+### Skill Structure
+
+Skills are Markdown files with YAML frontmatter:
+
+```markdown
+---
+name: skill-name
+description: Brief description of what this skill does  
+triggers:
+  - "keyword1"
+  - "phrase to trigger"
+  - "pattern"
+context_types:
+  - "rust"
+  - "typescript"
+project_types:
+  - "web-api"
+  - "cli-tool"
+---
+
+# Skill Instructions
+
+Detailed instructions for the AI agent...
+```
+
+## Creating Your First Skill
+
+### 1. Create Skill Directory
+
+```bash
+# Global skills (available to all projects)
+mkdir -p ~/.local/share/agentloop/vault/skills/my-first-skill
+
+# Project-specific skills
+mkdir -p ./.agentloop/skills/my-first-skill
+```
+
+### 2. Create SKILL.md
+
+Create `SKILL.md` in your skill directory:
+
+```markdown
+---
+name: rust-web-api
+description: Specialized assistance for Rust web API development using Axum
+triggers:
+  - "rust api"
+  - "axum"
+  - "web service"
+  - "rest endpoint"
+  - "api endpoint"
+context_types:
+  - "rust"
+project_types:
+  - "web-api"
+  - "microservice"
+---
+
+# Rust Web API Development with Axum
+
+When working with Rust web APIs using Axum framework:
+
+## Architecture Patterns
+
+1. **Handler Functions**: Use async functions that return `Result<impl IntoResponse, AppError>`
+2. **State Management**: Use `axum::extract::State` for shared application state
+3. **Error Handling**: Create custom error types that implement `IntoResponse`
+4. **Validation**: Use serde for request/response serialization with validation
+
+## Code Templates
+
+### Basic Handler Pattern
+```rust
+use axum::{extract::State, http::StatusCode, response::Json, Result};
+
+pub async fn create_user(
+    State(app_state): State<AppState>,
+    Json(payload): Json<CreateUserRequest>,
+) -> Result<Json<User>, AppError> {
+    // Validation
+    payload.validate()?;
+    
+    // Business logic
+    let user = app_state.user_service.create(payload).await?;
+    
+    Ok(Json(user))
+}
+```
+
+### Error Handling Pattern
+```rust
+#[derive(Debug, thiserror::Error)]
+pub enum AppError {
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+    
+    #[error("Validation error: {0}")]
+    Validation(String),
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            AppError::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
+            AppError::Validation(msg) => (StatusCode::BAD_REQUEST, &msg),
+        };
+        
+        (status, Json(ErrorResponse { error: message.to_string() })).into_response()
+    }
+}
+```
+
+## Best Practices
+
+1. **Use extractors properly**: Path, Query, Json, State in correct order
+2. **Implement proper error handling**: Custom error types with IntoResponse
+3. **Add request validation**: Use serde with validator crate
+4. **Structure responses consistently**: Standard success/error formats
+5. **Add proper logging**: Use tracing for structured logging
+6. **Test endpoints thoroughly**: Unit tests for handlers and integration tests
+
+## Testing Patterns
+
+Always include:
+- Success case tests
+- Validation error tests  
+- Database error handling tests
+- Authentication/authorization tests
+```
+
+### 3. Test Your Skill
+
+In Zed, open a Rust project and ask:
+```
+"Create a new Rust API endpoint for user registration"
+```
+
+The skill should trigger and provide Axum-specific guidance.
+
+## Advanced Skill Examples
+
+### React TypeScript Skill
+
+```markdown
+---
+name: react-typescript-components
+description: React TypeScript component development patterns
+triggers:
+  - "react component"
+  - "tsx component"
+  - "react typescript"
+  - "component"
+context_types:
+  - "typescript"
+  - "tsx"
+project_types:
+  - "react-app"
+  - "nextjs"
+---
+
+# React TypeScript Component Development
+
+## Component Patterns
+
+### Functional Component with Props
+```tsx
+interface UserCardProps {
+  user: User;
+  onClick?: (userId: string) => void;
+  className?: string;
+}
+
+export const UserCard: React.FC<UserCardProps> = ({ 
+  user, 
+  onClick, 
+  className 
+}) => {
+  const handleClick = useCallback(() => {
+    onClick?.(user.id);
+  }, [onClick, user.id]);
+
+  return (
+    <div className={cn("user-card", className)} onClick={handleClick}>
+      <h3>{user.name}</h3>
+      <p>{user.email}</p>
+    </div>
+  );
+};
+```
+
+### Custom Hook Pattern
+```tsx
+interface UseUserDataReturn {
+  users: User[];
+  loading: boolean;
+  error: string | null;
+  refetch: () => void;
+}
+
+export const useUserData = (): UseUserDataReturn => {
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchUsers = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await userAPI.getUsers();
+      setUsers(response);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  return { users, loading, error, refetch: fetchUsers };
+};
+```
+
+## Conventions
+
+1. **Props Interface**: Always define props interface with proper typing
+2. **Event Handlers**: Use `useCallback` for event handlers to prevent re-renders
+3. **State Management**: Use appropriate state patterns (useState, useReducer, context)
+4. **Error Handling**: Implement proper error boundaries and error states
+5. **Performance**: Use React.memo, useMemo, useCallback appropriately
+6. **Testing**: Write tests with React Testing Library
+
+## File Structure
+```
+src/
+  components/
+    common/           # Reusable components
+    feature-name/     # Feature-specific components
+      FeatureName.tsx
+      FeatureName.test.tsx
+      FeatureName.stories.tsx
+      types.ts
+      hooks.ts
+```
+```
+
+### Database Schema Design Skill
+
+```markdown
+---
+name: database-schema-design
+description: Database schema design and optimization patterns
+triggers:
+  - "database schema"
+  - "table design"
+  - "sql schema"
+  - "database design"
+  - "migration"
+context_types:
+  - "sql"
+  - "rust"
+  - "typescript"
+project_types:
+  - "web-api"
+  - "database"
+---
+
+# Database Schema Design
+
+## Design Principles
+
+1. **Normalization**: Follow 3NF unless performance requires denormalization
+2. **Indexing**: Add indexes for frequently queried columns
+3. **Constraints**: Use appropriate constraints for data integrity
+4. **Naming**: Consistent naming conventions (snake_case for PostgreSQL)
+
+## Common Patterns
+
+### User Management Schema
+```sql
+-- Users table
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    is_active BOOLEAN DEFAULT true,
+    email_verified BOOLEAN DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User roles (many-to-many)
+CREATE TABLE user_roles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role_name VARCHAR(50) NOT NULL,
+    granted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    granted_by UUID REFERENCES users(id),
+    UNIQUE(user_id, role_name)
+);
+
+-- Indexes
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_username ON users(username);
+CREATE INDEX idx_user_roles_user_id ON user_roles(user_id);
+CREATE INDEX idx_users_created_at ON users(created_at);
+```
+
+### Audit Log Pattern
+```sql
+CREATE TABLE audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    table_name VARCHAR(100) NOT NULL,
+    operation VARCHAR(10) NOT NULL, -- INSERT, UPDATE, DELETE
+    old_values JSONB,
+    new_values JSONB,
+    changed_by UUID REFERENCES users(id),
+    changed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_logs_table_name ON audit_logs(table_name);
+CREATE INDEX idx_audit_logs_changed_at ON audit_logs(changed_at);
+CREATE INDEX idx_audit_logs_changed_by ON audit_logs(changed_by);
+```
+
+## Migration Best Practices
+
+1. **Backward Compatibility**: Ensure migrations don't break existing code
+2. **Rollback Plan**: Always have a rollback strategy
+3. **Data Migration**: Separate schema and data migrations
+4. **Testing**: Test migrations on production-like data
+5. **Performance**: Consider impact on large tables
+
+## Rust Integration (sqlx)
+```rust
+// User model
+#[derive(sqlx::FromRow, Serialize, Deserialize)]
+pub struct User {
+    pub id: Uuid,
+    pub email: String,
+    pub username: String,
+    #[serde(skip)]
+    pub password_hash: String,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub is_active: bool,
+    pub email_verified: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+// Repository pattern
+impl UserRepository {
+    pub async fn create(&self, user: CreateUserRequest) -> Result<User, DbError> {
+        let user = sqlx::query_as!(
+            User,
+            r#"
+            INSERT INTO users (email, username, password_hash, first_name, last_name)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
+            "#,
+            user.email,
+            user.username,
+            user.password_hash,
+            user.first_name,
+            user.last_name
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(user)
+    }
+}
+```
+```
+
+## Project-Specific Skills
+
+### Creating Project Skills
+
+Place skills in your project root:
+
+```bash
+# Create project skills directory
+mkdir -p .agentloop/skills
+
+# Add to .agentloop/config.yaml
+skills:
+  directories:
+    - ./.agentloop/skills
+    - ~/.local/share/agentloop/vault/skills
+```
+
+### E-commerce Project Skill
+
+```markdown
+---
+name: ecommerce-patterns
+description: E-commerce specific patterns and business logic
+triggers:
+  - "order"
+  - "payment"
+  - "inventory"
+  - "cart"
+  - "checkout"
+  - "product"
+context_types:
+  - "rust"
+  - "typescript"
+project_types:
+  - "ecommerce"
+---
+
+# E-commerce Development Patterns
+
+## Core Entities
+
+### Product Management
+```rust
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Product {
+    pub id: Uuid,
+    pub sku: String,
+    pub name: String,
+    pub description: String,
+    pub price: Decimal,
+    pub inventory_count: i32,
+    pub category_id: Uuid,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProductVariant {
+    pub id: Uuid,
+    pub product_id: Uuid,
+    pub name: String, // e.g., "Size: Large, Color: Red"
+    pub sku: String,
+    pub price_adjustment: Decimal,
+    pub inventory_count: i32,
+}
+```
+
+### Order Processing
+```rust
+#[derive(Debug, Serialize, Deserialize)]
+pub enum OrderStatus {
+    Pending,
+    Confirmed,
+    Paid,
+    Shipped,
+    Delivered,
+    Cancelled,
+    Refunded,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Order {
+    pub id: Uuid,
+    pub customer_id: Uuid,
+    pub status: OrderStatus,
+    pub total_amount: Decimal,
+    pub shipping_address: Address,
+    pub billing_address: Address,
+    pub items: Vec<OrderItem>,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn process_order(order: &mut Order) -> Result<(), OrderError> {
+    // 1. Validate inventory
+    validate_inventory(&order.items).await?;
+    
+    // 2. Calculate totals
+    calculate_totals(order).await?;
+    
+    // 3. Process payment
+    process_payment(order).await?;
+    
+    // 4. Update inventory
+    update_inventory(&order.items).await?;
+    
+    // 5. Send confirmation
+    send_order_confirmation(order).await?;
+    
+    order.status = OrderStatus::Confirmed;
+    Ok(())
+}
+```
+
+## Business Rules
+
+1. **Inventory Management**: Always check availability before confirming orders
+2. **Pricing**: Handle price changes gracefully with locked cart prices
+3. **Refunds**: Implement proper refund workflows with inventory restoration
+4. **Tax Calculation**: Consider different tax rates by location
+5. **Shipping**: Calculate shipping costs based on weight/dimensions/location
+
+## Common Patterns
+
+### Cart Management
+```typescript
+interface CartItem {
+  productId: string;
+  variantId?: string;
+  quantity: number;
+  unitPrice: number;
+  lockedPrice?: number; // Price at time of adding to cart
+}
+
+class CartService {
+  async addItem(cartId: string, item: CartItem): Promise<Cart> {
+    // Check inventory
+    await this.validateInventory(item);
+    
+    // Lock current price
+    item.lockedPrice = await this.getCurrentPrice(item.productId, item.variantId);
+    
+    // Add to cart with expiration
+    return this.cartRepository.addItem(cartId, item);
+  }
+}
+```
+
+### Payment Processing
+```rust
+pub async fn process_payment(
+    order: &Order,
+    payment_method: PaymentMethod,
+) -> Result<PaymentResult, PaymentError> {
+    match payment_method {
+        PaymentMethod::CreditCard(card) => {
+            // Process credit card payment
+            let charge = stripe_client.create_charge(ChargeParams {
+                amount: order.total_amount,
+                currency: "usd",
+                source: card.token,
+                description: format!("Order {}", order.id),
+            }).await?;
+            
+            Ok(PaymentResult::Success(charge.id))
+        }
+        PaymentMethod::PayPal(token) => {
+            // Process PayPal payment
+            // Implementation...
+        }
+    }
+}
+```
+```
+
+## Skill Management Commands
+
+### List Available Skills
+
+```bash
+# List all skills
+agentloop skills list
+
+# List skills for specific context
+agentloop skills list --context rust
+
+# Show skill details
+agentloop skills show rust-web-api
+```
+
+### Test Skills
+
+```bash
+# Test skill trigger
+agentloop skills test "create rust api endpoint"
+
+# Validate skill syntax
+agentloop skills validate ~/.local/share/agentloop/vault/skills/my-skill/SKILL.md
+```
+
+### Skill Development Workflow
+
+1. **Create** skill directory and SKILL.md
+2. **Test** with sample triggers in Zed
+3. **Refine** based on actual usage
+4. **Share** with team or community
+5. **Iterate** based on feedback
+
+## Best Practices for Skill Creation
+
+### Effective Triggers
+
+<Aside type="tip">
+**Good Triggers**: Use specific, contextual phrases that developers actually use when asking for help.
+</Aside>
+
+**Good Examples:**
+- "rust error handling"
+- "react component state"  
+- "database migration"
+- "api authentication"
+
+**Poor Examples:**
+- "help"
+- "code"
+- "fix"
+- "write"
+
+### Comprehensive Instructions
+
+1. **Context Setting**: Explain when to use patterns
+2. **Code Examples**: Provide complete, working examples
+3. **Best Practices**: Include dos and don'ts
+4. **Common Pitfalls**: Warn about frequent mistakes
+5. **Testing Guidance**: Show how to test the patterns
+
+### Skill Organization
+
+```
+skills/
+├── language-specific/
+│   ├── rust-web-api/
+│   ├── typescript-react/
+│   └── python-data/
+├── project-specific/
+│   ├── ecommerce-patterns/
+│   ├── fintech-compliance/
+│   └── gaming-engine/
+└── general/
+    ├── security-patterns/
+    ├── performance-optimization/
+    └── testing-strategies/
+```
+
+## Sharing and Community Skills
+
+### Contributing Skills
+
+1. **Create** well-documented skills
+2. **Test** thoroughly in real projects
+3. **Submit** pull request to skills repository
+4. **Maintain** and update based on feedback
+
+### Using Community Skills
+
+```bash
+# Install from skills repository
+agentloop skills install community/rust-web-api
+
+# Update all skills
+agentloop skills update
+
+# Search available skills
+agentloop skills search "react testing"
+```
+
+## Troubleshooting Skills
+
+### Skill Not Triggering
+
+1. **Check triggers**: Verify your request matches trigger patterns
+2. **Context match**: Ensure file types match `context_types`
+3. **Reload skills**: `agentloop skills reload`
+
+### Poor Skill Performance
+
+1. **Refine instructions**: Make them more specific
+2. **Add examples**: Include more code samples
+3. **Test thoroughly**: Use in real scenarios
+
+### Debugging Skills
+
+```bash
+# Enable skill debugging
+export AGENTLOOP_DEBUG_SKILLS=true
+
+# Show skill matching process
+agentloop --debug skills match "your request here"
+```
+
+## Advanced Features
+
+### Dynamic Skills
+
+Skills can include dynamic content based on project context:
+
+```markdown
+---
+name: project-aware-skill
+description: Adapts to current project structure
+triggers:
+  - "project pattern"
+---
+
+# Project-Aware Assistance
+
+{% if project.language == "rust" and project.has_file("Cargo.toml") %}
+Based on your Cargo.toml, I see you're using these dependencies:
+- {{ project.dependencies | join: ", " }}
+
+Recommended patterns for your stack...
+{% endif %}
+
+{% if project.has_file("package.json") %}
+Your package.json indicates a {{ project.framework }} project.
+{% endif %}
+```
+
+### Skill Chaining
+
+Skills can reference and build upon each other:
+
+```markdown
+---
+name: advanced-rust-api
+description: Advanced patterns building on rust-web-api skill
+extends: rust-web-api
+triggers:
+  - "advanced rust api"
+  - "rust microservice"
+---
+
+# Advanced Rust API Patterns
+
+Building on the basic patterns from `rust-web-api`, let's explore:
+
+1. **Service Layer Architecture**
+2. **Event-Driven Patterns**  
+3. **CQRS Implementation**
+4. **Circuit Breaker Patterns**
+```
+
+## Next Steps
+
+With custom skills mastered, you can:
+- Create domain-specific assistance for your projects
+- Share skills with your team
+- Contribute to the community skills library
+- Build increasingly sophisticated AI assistance workflows
+
+Continue with [**Troubleshooting**](/zed-editor/troubleshooting/) to resolve any issues with your custom skills.

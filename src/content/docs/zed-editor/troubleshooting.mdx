@@ -1,0 +1,729 @@
+---
+title: Zed Editor Troubleshooting
+description: Solve common issues and optimize AgentLoop performance in Zed editor.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Quick Diagnostic Checklist
+
+Before diving into specific issues, run this quick diagnostic:
+
+```bash
+# 1. Check all components are running
+ps aux | grep agentloop-server
+which agentloop pi zed
+
+# 2. Test basic connectivity
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+
+# 3. Verify configuration
+agentloop config validate
+
+# 4. Check recent logs
+tail -n 50 ~/.local/share/agentloop/logs/agentloop.log
+```
+
+## Connection and Setup Issues
+
+### "Failed to Connect to AgentLoop Server"
+
+**Symptoms:**
+- Zed shows "Connection failed" in assistant panel
+- No response when trying to use AgentLoop
+
+**Diagnosis:**
+```bash
+# Check if server is running
+ps aux | grep agentloop-server
+
+# Check socket file exists
+ls -la ~/.local/share/agentloop/agentloop.sock
+
+# Test socket connection
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  nc -U ~/.local/share/agentloop/agentloop.sock
+```
+
+**Solutions:**
+
+1. **Start the server:**
+```bash
+# Manual start
+agentloop-server --feature zed-acp
+
+# Or restart systemd service
+sudo systemctl restart agentloop-server
+```
+
+2. **Fix socket permissions:**
+```bash
+# Correct permissions (owner only)
+chmod 700 ~/.local/share/agentloop/agentloop.sock
+
+# If socket is stale, remove and restart
+rm ~/.local/share/agentloop/agentloop.sock
+agentloop-server --feature zed-acp
+```
+
+3. **Check configuration paths:**
+```bash
+# Verify socket path matches in both configs
+grep socket_path ~/.config/agentloop/agentloop.yaml
+grep socket_path ~/.config/zed/settings.json
+```
+
+### "AgentLoop Extension Not Found"
+
+**Symptoms:**
+- Zed doesn't show AgentLoop as assistant provider option
+- Extension doesn't load
+
+**Solutions:**
+
+1. **Verify extension installation:**
+```bash
+ls ~/.config/zed/extensions/agentloop
+```
+
+2. **Manual installation:**
+```bash
+cd ~/.config/zed/extensions
+git clone git@github.com:MarcoMruz/zed-agentloop-extension.git agentloop
+```
+
+3. **Check Zed logs:**
+```bash
+tail -f ~/.config/zed/logs/Zed.log
+```
+
+4. **Restart Zed completely:**
+```bash
+pkill -f zed
+zed
+```
+
+### "Authentication Failed" / API Key Issues
+
+**Symptoms:**
+- "Invalid API key" errors
+- "Authentication failed" messages
+
+**Diagnosis:**
+```bash
+# Check environment variables
+echo $ANTHROPIC_API_KEY
+echo $OPENAI_API_KEY
+
+# Test pi directly
+echo "hello" | pi
+```
+
+**Solutions:**
+
+1. **Set API key properly:**
+```bash
+# Add to shell profile
+echo 'export ANTHROPIC_API_KEY="your-key-here"' >> ~/.zshrc
+source ~/.zshrc
+
+# Or use different provider
+export OPENAI_API_KEY="your-openai-key"
+```
+
+2. **Update configuration:**
+```yaml
+# In agentloop.yaml
+pi:
+  provider: anthropic  # or openai
+  model: claude-sonnet-4-20250514  # or gpt-4
+```
+
+3. **Test pi configuration:**
+```bash
+pi --provider anthropic --model claude-sonnet-4-20250514 "test message"
+```
+
+## Performance Issues
+
+### Slow Response Times
+
+**Symptoms:**
+- Long delays before responses appear
+- Timeouts during complex requests
+
+**Diagnosis:**
+```bash
+# Check system resources
+htop
+df -h
+
+# Monitor AgentLoop performance
+agentloop metrics show
+
+# Check context size
+# Enable debug mode in config
+```
+
+**Solutions:**
+
+1. **Optimize context settings:**
+```yaml
+# In agentloop.yaml
+zed:
+  context_lines: 30           # Reduce from 50
+  max_file_size: 524288      # Reduce from 1MB
+  max_context_characters: 50000  # Reduce from 100K
+```
+
+2. **Reduce concurrent sessions:**
+```yaml
+sessions:
+  max_concurrent: 3          # Reduce from 5
+  max_per_user: 2           # Reduce from 3
+```
+
+3. **Enable caching:**
+```yaml
+memory:
+  enable_caching: true
+  cache_ttl_minutes: 120
+```
+
+4. **Use performance profile:**
+```bash
+export AGENTLOOP_PROFILE="fast"
+```
+
+### "Context Too Large" Errors
+
+**Symptoms:**
+- "Context exceeds maximum size" errors
+- Requests fail with large codebases
+
+**Solutions:**
+
+1. **Selective context inclusion:**
+```
+# Instead of including whole project, be specific:
+/include src/main.rs
+/include src/models.rs
+
+# Then ask your question
+```
+
+2. **Update exclusion patterns:**
+```yaml
+zed:
+  excluded_patterns:
+    - "target/"
+    - "node_modules/"
+    - "build/"
+    - "dist/"
+    - "*.log"
+    - "*.lock"       # Add lock files
+    - "*.min.js"     # Add minified files
+    - "*.bundle.*"   # Add bundle files
+```
+
+3. **Reduce context scope:**
+```yaml
+zed:
+  context_lines: 25          # Smaller context window
+  max_file_size: 262144     # 256KB limit
+  include_git_status: false  # Disable if not needed
+  include_diagnostics: false # Disable if not needed
+```
+
+### High Memory Usage
+
+**Symptoms:**
+- AgentLoop server consuming excessive RAM
+- System becoming slow during use
+
+**Solutions:**
+
+1. **Memory optimization:**
+```yaml
+memory:
+  max_cache_size_mb: 50      # Reduce cache size
+  enable_caching: false      # Disable if memory is critical
+  
+sessions:
+  evict_lru: true           # Enable aggressive eviction
+  timeout_minutes: 15       # Shorter session timeouts
+```
+
+2. **Restart server periodically:**
+```bash
+# Add to cron for daily restart
+0 3 * * * systemctl --user restart agentloop-server
+```
+
+## Context and Response Quality Issues
+
+### Generic or Irrelevant Responses
+
+**Symptoms:**
+- Responses don't seem to understand your codebase
+- Generic advice instead of specific help
+
+**Diagnosis:**
+```
+# Check what context AgentLoop sees
+/context
+
+# This will show exactly what files and information are included
+```
+
+**Solutions:**
+
+1. **Verify file types are included:**
+```yaml
+zed:
+  allowed_file_types:
+    - "*.rs"
+    - "*.toml"     # Add project files
+    - "*.md"       # Add documentation
+    # Add your specific file types
+```
+
+2. **Include relevant project files:**
+```
+# Manually include key files
+/include Cargo.toml
+/include README.md
+/include src/lib.rs
+
+# Then ask your question
+```
+
+3. **Provide more context in questions:**
+```
+# Instead of: "optimize this function"
+# Try: "optimize this database query function for a high-traffic e-commerce API"
+```
+
+### Missing Project Context
+
+**Symptoms:**
+- AgentLoop doesn't know about your project structure
+- Suggestions don't match your architecture patterns
+
+**Solutions:**
+
+1. **Enable project structure inclusion:**
+```json
+// In Zed settings.json
+{
+  "assistant": {
+    "agentloop": {
+      "include_project_structure": true,
+      "include_git_status": true
+    }
+  }
+}
+```
+
+2. **Use project context command:**
+```
+/project
+
+# Then ask your question about architecture
+```
+
+3. **Create project-specific skills:**
+```markdown
+---
+name: my-project-patterns
+description: Patterns specific to this project
+triggers:
+  - "project pattern"
+  - "our architecture"
+---
+
+This project uses:
+- Clean architecture with domain/application/infrastructure layers
+- PostgreSQL with sqlx for data access
+- Axum for web framework
+- ...
+```
+
+### Code Style Inconsistencies
+
+**Symptoms:**
+- Generated code doesn't match your project's style
+- Different naming conventions or patterns
+
+**Solutions:**
+
+1. **Include style configuration:**
+```
+# Include linting/formatting configs in context
+/include .eslintrc.json
+/include rustfmt.toml
+/include pyproject.toml
+
+# Then ask for code generation
+```
+
+2. **Specify style in requests:**
+```
+"Generate a new API endpoint following our existing error handling patterns from user_controller.rs"
+```
+
+3. **Create style skills:**
+```markdown
+---
+name: project-style-guide
+description: Code style and conventions for this project
+---
+
+## Style Guidelines
+
+1. **Error Handling**: Always use custom error types with thiserror
+2. **Database**: Use sqlx with compile-time checked queries
+3. **API Responses**: Follow standard response format with Result<T, E>
+4. **Naming**: snake_case for variables, PascalCase for types
+```
+
+## Zed-Specific Issues
+
+### Assistant Panel Not Showing
+
+**Symptoms:**
+- Can't find assistant panel in Zed
+- Assistant commands not working
+
+**Solutions:**
+
+1. **Enable assistant feature:**
+```json
+// In settings.json
+{
+  "features": {
+    "assistant": true
+  }
+}
+```
+
+2. **Check keyboard shortcuts:**
+```json
+// In keymap.json
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "cmd-shift-a": "assistant:toggle"
+    }
+  }
+]
+```
+
+3. **Reset Zed configuration:**
+```bash
+# Backup current config
+cp ~/.config/zed/settings.json ~/.config/zed/settings.json.backup
+
+# Reset to minimal config and test
+echo '{"assistant":{"provider":"agentloop"}}' > ~/.config/zed/settings.json
+```
+
+### Keyboard Shortcuts Not Working
+
+**Solutions:**
+
+1. **Check for conflicts:**
+```json
+// View current keybindings in Zed
+// Cmd/Ctrl + Shift + P -> "zed: open keymap"
+```
+
+2. **Use alternative shortcuts:**
+```json
+[
+  {
+    "context": "Editor", 
+    "bindings": {
+      "alt-a": "assistant:toggle",        // Alternative to cmd-shift-a
+      "alt-k": "assistant:inline_assist"  // Alternative to cmd-k
+    }
+  }
+]
+```
+
+## Advanced Debugging
+
+### Enable Debug Mode
+
+**Full debug configuration:**
+```yaml
+# In agentloop.yaml
+logging:
+  level: debug
+  file: ~/.local/share/agentloop/logs/debug.log
+  performance_metrics: true
+  context_extraction_timing: true
+
+zed:
+  debug_context_extraction: true
+  log_excluded_files: true
+  log_timing_info: true
+```
+
+**Environment variables:**
+```bash
+export AGENTLOOP_LOG_LEVEL=debug
+export ZED_DEBUG_CONTEXT=true
+export ZED_DEBUG_TIMING=true
+```
+
+### Monitor Logs in Real-time
+
+```bash
+# Monitor all AgentLoop logs
+tail -f ~/.local/share/agentloop/logs/agentloop.log
+
+# Monitor only errors
+tail -f ~/.local/share/agentloop/logs/agentloop.log | grep ERROR
+
+# Monitor Zed logs
+tail -f ~/.config/zed/logs/Zed.log
+
+# Monitor context extraction
+tail -f ~/.local/share/agentloop/logs/debug.log | grep CONTEXT
+```
+
+### Network and Socket Debugging
+
+```bash
+# Test socket with verbose output
+socat -v - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+
+# Monitor socket connections
+lsof ~/.local/share/agentloop/agentloop.sock
+
+# Test with netcat
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  nc -v -U ~/.local/share/agentloop/agentloop.sock
+```
+
+### Performance Profiling
+
+```bash
+# Enable performance monitoring
+export AGENTLOOP_PERFORMANCE_MONITORING=true
+
+# Monitor resource usage
+watch -n 1 'ps aux | grep agentloop'
+
+# Monitor memory usage
+watch -n 1 'cat /proc/$(pgrep agentloop-server)/status | grep -E "(VmRSS|VmPeak)"'
+```
+
+## Error Reference
+
+### Common Error Messages
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Connection refused` | Server not running | Start `agentloop-server` |
+| `Permission denied` | Socket permissions | `chmod 700` socket file |
+| `Context too large` | Too much context data | Reduce context size in config |
+| `Authentication failed` | Invalid API key | Check environment variables |
+| `Timeout` | Server overloaded | Reduce concurrent sessions |
+| `Extension not found` | Missing Zed extension | Install extension manually |
+| `Invalid configuration` | Config file errors | Run `agentloop config validate` |
+
+## Recovery Procedures
+
+### Complete Reset
+
+If nothing else works, try a complete reset:
+
+```bash
+# 1. Stop all processes
+pkill -f agentloop-server
+pkill -f zed
+
+# 2. Clean up
+rm -f ~/.local/share/agentloop/agentloop.sock
+rm -rf ~/.local/share/agentloop/cache/*
+
+# 3. Reset configurations
+cp ~/.config/agentloop/agentloop.yaml ~/.config/agentloop/agentloop.yaml.backup
+cp ~/.config/zed/settings.json ~/.config/zed/settings.json.backup
+
+# 4. Use minimal configs for testing
+cat > ~/.config/agentloop/agentloop.yaml << EOF
+server:
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+pi:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+zed:
+  acp_enabled: true
+  context_lines: 25
+EOF
+
+cat > ~/.config/zed/settings.json << EOF
+{
+  "assistant": {
+    "provider": "agentloop",
+    "agentloop": {
+      "socket_path": "~/.local/share/agentloop/agentloop.sock"
+    }
+  },
+  "features": {
+    "assistant": true
+  }
+}
+EOF
+
+# 5. Test basic functionality
+agentloop-server --feature zed-acp &
+sleep 5
+agentloop "hello world"
+
+# 6. Test in Zed
+zed .
+```
+
+### Data Recovery
+
+If you lose configuration or skills:
+
+```bash
+# Restore from backup
+cp ~/.config/agentloop/agentloop.yaml.backup ~/.config/agentloop/agentloop.yaml
+
+# Re-download community skills
+agentloop skills update
+
+# Export/import skills
+agentloop skills export > my-skills.json
+agentloop skills import < my-skills.json
+```
+
+## Performance Optimization
+
+### Optimal Configuration for Different Use Cases
+
+**Laptop/Limited Resources:**
+```yaml
+zed:
+  context_lines: 20
+  max_file_size: 262144      # 256KB
+  max_context_characters: 25000
+sessions:
+  max_concurrent: 2
+  timeout_minutes: 15
+memory:
+  enable_caching: false
+```
+
+**Desktop/High Performance:**
+```yaml
+zed:
+  context_lines: 75
+  max_file_size: 2097152     # 2MB
+  max_context_characters: 150000
+sessions:
+  max_concurrent: 8
+  timeout_minutes: 45
+memory:
+  enable_caching: true
+  cache_ttl_minutes: 180
+```
+
+**Server/Team Use:**
+```yaml
+sessions:
+  max_concurrent: 20
+  max_per_user: 5
+memory:
+  enable_caching: true
+  max_cache_size_mb: 200
+logging:
+  level: warn              # Reduce log verbosity
+```
+
+## Getting Help
+
+<Aside type="tip">
+**Still Having Issues?** Join our community for real-time help and support.
+</Aside>
+
+### Community Resources
+
+- **GitHub Issues**: [Report bugs and feature requests](https://github.com/MarcoMruz/agentloop-rs/issues)
+- **Discussions**: [Get help from the community](https://github.com/MarcoMruz/agentloop-rs/discussions)
+- **Documentation**: [Complete guides and references](/getting-started/overview/)
+
+### Diagnostic Information to Include
+
+When reporting issues, include:
+
+```bash
+# System information
+uname -a
+zed --version
+agentloop --version
+pi --version
+
+# Configuration (sanitize API keys!)
+agentloop config show --sanitized
+
+# Recent logs (last 100 lines)
+tail -n 100 ~/.local/share/agentloop/logs/agentloop.log
+
+# Error reproduction steps
+# 1. What you did
+# 2. What you expected
+# 3. What actually happened
+# 4. Any error messages
+```
+
+### Emergency Contacts
+
+For critical issues affecting production deployments:
+- Priority support available for enterprise users
+- Security issues: security@agentloop.dev
+- Performance issues affecting teams: performance@agentloop.dev
+
+## Prevention and Monitoring
+
+### Health Monitoring
+
+Set up monitoring to prevent issues:
+
+```bash
+# Add to crontab for health checks
+*/5 * * * * /usr/local/bin/agentloop health || systemctl --user restart agentloop-server
+
+# Monitor log errors
+*/10 * * * * grep -q "ERROR" ~/.local/share/agentloop/logs/agentloop.log && echo "AgentLoop errors detected" | mail -s "Alert" admin@example.com
+```
+
+### Backup Strategy
+
+```bash
+#!/bin/bash
+# Daily backup script
+
+BACKUP_DIR="$HOME/backups/agentloop/$(date +%Y-%m-%d)"
+mkdir -p "$BACKUP_DIR"
+
+# Backup configuration
+cp ~/.config/agentloop/agentloop.yaml "$BACKUP_DIR/"
+cp ~/.config/zed/settings.json "$BACKUP_DIR/"
+
+# Backup skills
+cp -r ~/.local/share/agentloop/vault/skills "$BACKUP_DIR/"
+
+# Backup recent sessions
+find ~/.local/share/agentloop/vault/sessions -name "*.md" -mtime -7 -exec cp {} "$BACKUP_DIR/" \;
+```
+
+By following this troubleshooting guide, you should be able to resolve most common issues with AgentLoop in Zed and maintain optimal performance for your AI-assisted coding workflow.

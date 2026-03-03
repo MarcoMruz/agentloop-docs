@@ -1,0 +1,512 @@
+---
+title: "Tutorial: Zed Editor Integration"
+description: Set up AgentLoop integration with Zed editor using the Assistant Context Protocol (ACP).
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Goal
+
+Integrate AgentLoop with Zed editor to provide AI-powered coding assistance with full project context, including file content, git status, diagnostics, and intelligent code understanding.
+
+## Overview
+
+The Zed integration uses:
+- **AgentLoop Rust implementation** (`agentloop-rs`) for performance
+- **Assistant Context Protocol (ACP)** for rich context sharing
+- **Unix domain socket** for communication
+- **Automatic context extraction** from your workspace
+
+## Step 1: Install Prerequisites
+
+### 1.1 Install AgentLoop Rust
+
+```bash
+# Clone the Rust implementation
+git clone git@github.com:MarcoMruz/agentloop-rs.git
+cd agentloop-rs
+
+# Build with Zed ACP support
+cargo build --release --features zed-acp
+
+# Install globally
+cargo install --path crates/agentloop-server --features zed-acp
+cargo install --path crates/agentloop-cli
+```
+
+### 1.2 Install Pi Coding Agent
+
+```bash
+# Install pi globally
+npm install -g @mariozechner/pi-coding-agent@latest
+
+# Verify installation
+pi --version
+```
+
+### 1.3 Verify Zed Version
+
+Ensure you have Zed 0.100.0+ for ACP support:
+
+```bash
+zed --version
+```
+
+## Step 2: Configure AgentLoop
+
+### 2.1 Create Configuration
+
+Create `~/.config/agentloop/agentloop.yaml`:
+
+```yaml
+server:
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+
+pi:
+  binary_path: pi
+  provider: anthropic  # or openai, claude, etc.
+  model: claude-sonnet-4-20250514
+  extensions_dir: ~/.local/share/agentloop/extensions
+
+vault:
+  path: ~/.local/share/agentloop/vault
+
+zed:
+  acp_enabled: true
+  context_lines: 50
+  max_file_size: 1048576  # 1MB
+  allowed_file_types:
+    - "*.rs"
+    - "*.ts" 
+    - "*.js"
+    - "*.py"
+    - "*.go"
+    - "*.md"
+    - "*.json"
+    - "*.yaml"
+  excluded_patterns:
+    - "target/"
+    - "node_modules/"
+    - ".git/"
+    - "build/"
+    - "dist/"
+
+memory:
+  profile_entries_limit: 100
+  conversation_retention_days: 30
+  enable_caching: true
+
+sessions:
+  max_concurrent: 5
+  max_per_user: 2
+  timeout_minutes: 30
+
+security:
+  allowed_paths:
+    - ~/dev
+    - ~/projects
+    - /tmp
+  injection_protection:
+    enabled: true
+
+logging:
+  level: info
+  file: ~/.local/share/agentloop/logs/zed.log
+```
+
+### 2.2 Set Environment Variables
+
+Add to your shell profile (`~/.bashrc`, `~/.zshrc`):
+
+```bash
+export ANTHROPIC_API_KEY="your-api-key-here"
+# or for OpenAI:
+# export OPENAI_API_KEY="your-api-key-here"
+
+export AGENTLOOP_CONFIG="~/.config/agentloop/agentloop.yaml"
+```
+
+## Step 3: Install Zed Extension
+
+### 3.1 From Extension Marketplace (Coming Soon)
+
+```bash
+# Will be available soon
+zed extension install agentloop
+```
+
+### 3.2 Install Manually (Current)
+
+```bash
+# Clone the extension
+cd ~/.config/zed/extensions
+git clone git@github.com:MarcoMruz/zed-agentloop-extension.git agentloop
+
+# Restart Zed to load the extension
+```
+
+## Step 4: Configure Zed
+
+### 4.1 Update Zed Settings
+
+Open Zed settings (`Cmd/Ctrl + ,`) and add:
+
+```json
+{
+  "assistant": {
+    "provider": "agentloop",
+    "agentloop": {
+      "socket_path": "~/.local/share/agentloop/agentloop.sock",
+      "model": "claude-sonnet-4-20250514",
+      "context_lines": 50,
+      "auto_context": true
+    }
+  },
+  "language_models": {
+    "agentloop": {
+      "api_key": null
+    }
+  },
+  "features": {
+    "assistant": true
+  }
+}
+```
+
+### 4.2 Keyboard Shortcuts (Optional)
+
+Add to your `keymap.json`:
+
+```json
+[
+  {
+    "bindings": {
+      "cmd-shift-a": "assistant:toggle"
+    }
+  },
+  {
+    "bindings": {
+      "cmd-k": "assistant:inline_assist"
+    }
+  },
+  {
+    "bindings": {
+      "cmd-enter": "assistant:submit"
+    }
+  }
+]
+```
+
+## Step 5: Start AgentLoop Server
+
+### 5.1 Manual Start
+
+```bash
+# Start the server
+agentloop-server --feature zed-acp
+
+# Verify it's running
+agentloop health
+```
+
+### 5.2 System Service (Recommended)
+
+Create a systemd service:
+
+```bash
+# Create service file
+sudo tee /etc/systemd/system/agentloop-server.service << EOF
+[Unit]
+Description=AgentLoop Server
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+ExecStart=/home/$USER/.cargo/bin/agentloop-server --feature zed-acp
+Restart=always
+RestartSec=5
+Environment=HOME=/home/$USER
+Environment=ANTHROPIC_API_KEY=your-api-key-here
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable --now agentloop-server
+```
+
+## Step 6: Test the Integration
+
+### 6.1 Basic Test
+
+1. Open a Rust/TypeScript/Python project in Zed
+2. Press `Cmd/Ctrl + Shift + A` to open Assistant panel
+3. Select "AgentLoop" from the provider dropdown
+4. Ask: "What does this code do?" 
+5. You should see a response with full project context
+
+### 6.2 Context Commands
+
+Test these special commands in the assistant:
+
+- `/context` - Show what context will be sent
+- `/project` - Include full project structure  
+- `/git` - Include git status and recent commits
+- `/errors` - Include all current diagnostics
+
+### 6.3 Inline Assistance
+
+1. Select some code in the editor
+2. Press `Cmd/Ctrl + K`
+3. Type a request like "optimize this function"
+4. Press Enter to see the AI response
+
+## Step 7: Advanced Usage
+
+### 7.1 Multi-file Context
+
+```rust
+// main.rs
+fn main() {
+    let config = load_config();  // Ask: "trace this function call"
+    process_data(config);
+}
+
+// config.rs  
+pub fn load_config() -> Config {
+    // Implementation here
+}
+```
+
+AgentLoop automatically includes related files when analyzing code.
+
+### 7.2 Git-aware Assistance
+
+```bash
+# After making changes, ask:
+# "Review my recent changes"
+# "Write a commit message for these changes"
+# "Check for any issues with my staged files"
+```
+
+### 7.3 Error Resolution
+
+When you have compiler errors:
+
+1. Position cursor on the error
+2. Ask: "How do I fix this error?"
+3. AgentLoop includes diagnostic context and suggests fixes
+
+### 7.4 Test Generation
+
+```rust
+// Select a function and ask:
+// "Generate comprehensive tests for this function"
+// "Create integration tests for this module"
+// "Add property-based tests"
+
+pub fn calculate_fibonacci(n: u32) -> u64 {
+    match n {
+        0 => 0,
+        1 => 1,
+        _ => calculate_fibonacci(n - 1) + calculate_fibonacci(n - 2),
+    }
+}
+```
+
+## Step 8: Custom Skills for Zed
+
+### 8.1 Create Zed-Specific Skills
+
+Create `~/.local/share/agentloop/vault/skills/zed-refactor/SKILL.md`:
+
+```markdown
+---
+name: zed-refactor
+description: Intelligent code refactoring for Zed editor
+triggers:
+  - "refactor"
+  - "restructure"
+  - "improve code"
+---
+
+# Zed Code Refactoring
+
+When refactoring code:
+
+1. **Analyze current structure**:
+   - Identify code smells
+   - Find duplication
+   - Check for design patterns
+
+2. **Suggest improvements**:
+   - Extract functions/methods
+   - Rename variables for clarity
+   - Reduce complexity
+   - Improve performance
+
+3. **Maintain functionality**:
+   - Preserve existing behavior
+   - Add tests if missing
+   - Update documentation
+
+4. **Use language idioms**:
+   - Follow Rust/TypeScript/Python conventions
+   - Use appropriate patterns
+   - Leverage standard library
+```
+
+### 8.2 Code Review Skill
+
+Create `~/.local/share/agentloop/vault/skills/zed-code-review/SKILL.md`:
+
+```markdown
+---
+name: zed-code-review
+description: Comprehensive code review for Zed editor
+triggers:
+  - "review"
+  - "check code"
+  - "code review"
+---
+
+# Zed Code Review
+
+Perform thorough code review:
+
+1. **Security Analysis**:
+   - Check for vulnerabilities
+   - Validate input handling
+   - Review authentication/authorization
+
+2. **Performance Review**:
+   - Identify bottlenecks
+   - Check memory usage
+   - Analyze algorithmic complexity
+
+3. **Code Quality**:
+   - Style consistency
+   - Documentation coverage
+   - Error handling
+   - Test coverage
+
+4. **Best Practices**:
+   - Design patterns
+   - SOLID principles
+   - Language-specific idioms
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+```bash
+# Check if server is running
+ps aux | grep agentloop-server
+
+# Check socket exists
+ls -la ~/.local/share/agentloop/agentloop.sock
+
+# Test connection manually
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+### Context Too Large
+
+If you get "context too large" errors:
+
+```yaml
+# Reduce context in agentloop.yaml
+zed:
+  context_lines: 25  # Reduce from 50
+  max_file_size: 512000  # Reduce from 1MB
+  excluded_patterns:
+    - "target/"
+    - "node_modules/"
+    - "build/"
+    - "dist/"
+    - "*.log"
+    - "*.tmp"
+```
+
+### Performance Issues
+
+```yaml
+# Optimize for performance
+memory:
+  enable_caching: true
+  cache_ttl_minutes: 120
+
+sessions:
+  max_concurrent: 3  # Reduce concurrent sessions
+
+logging:
+  level: warn  # Reduce log verbosity
+```
+
+### Debug Mode
+
+Enable debug logging for detailed troubleshooting:
+
+```yaml
+logging:
+  level: debug
+  file: ~/.local/share/agentloop/logs/zed-debug.log
+```
+
+Then check the logs:
+
+```bash
+tail -f ~/.local/share/agentloop/logs/zed-debug.log
+```
+
+## Next Steps
+
+<Aside type="tip">
+  **Explore Advanced Features:**
+  - Multi-file refactoring
+  - Automated test generation  
+  - Code documentation
+  - Performance analysis
+  - Security auditing
+</Aside>
+
+### Learn More
+
+- [Zed ACP Configuration Reference](/reference/zed-acp-config/)
+- [Zed ACP Types Reference](/reference/zed-acp-types/)
+- [Build Custom Skills](/tutorials/build-a-skill/)
+- [Security Policies](/reference/security-policies/)
+
+### Community
+
+- Share your Zed skills and configurations
+- Report issues on GitHub
+- Contribute improvements to the Rust implementation
+- Help improve the documentation
+
+## Migration from Other AI Providers
+
+### From GitHub Copilot
+
+1. Disable Copilot in Zed settings
+2. Install AgentLoop as shown above
+3. AgentLoop provides more context and flexibility than Copilot
+
+### From Cursor
+
+1. Export your custom prompts (if any)
+2. Convert them to AgentLoop skills
+3. Enjoy the same features with better performance
+
+### From ChatGPT/Claude Web
+
+1. Move your coding conversations to Zed
+2. Benefit from automatic project context
+3. Keep your coding workflow in one place
+
+The AgentLoop Zed integration provides a more integrated and context-aware experience than standalone AI services while maintaining the flexibility and power you need for professional development work.

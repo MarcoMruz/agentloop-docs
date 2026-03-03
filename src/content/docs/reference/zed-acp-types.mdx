@@ -1,0 +1,592 @@
+---
+title: Zed ACP Types Reference
+description: Rust type definitions for AgentLoop Zed Assistant Context Protocol integration.
+---
+
+## Overview
+
+This reference documents the Rust types used in the AgentLoop Zed ACP integration. All types are defined in the `agentloop-bridge` crate with the `zed-acp` feature enabled.
+
+## Core ACP Types
+
+### ACPMessage
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ACPMessage {
+    pub id: String,
+    pub method: ACPMethod,
+    pub params: serde_json::Value,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ACPMethod {
+    Initialize(InitializeParams),
+    Request(RequestParams),
+    Context(ContextParams),
+    Response(ResponseParams),
+    Error(ErrorParams),
+}
+```
+
+### Context Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZedContext {
+    pub file: FileContext,
+    pub selection: Option<SelectionContext>,
+    pub project: ProjectContext,
+    pub diagnostics: Vec<DiagnosticInfo>,
+    pub git: Option<GitContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileContext {
+    pub path: PathBuf,
+    pub content: String,
+    pub language: String,
+    pub line_count: usize,
+    pub size_bytes: u64,
+    pub cursor_position: Position,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionContext {
+    pub start: Position,
+    pub end: Position,
+    pub content: String,
+    pub surrounding_lines: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Position {
+    pub line: u32,
+    pub column: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectContext {
+    pub root_path: PathBuf,
+    pub name: String,
+    pub files: Vec<ProjectFile>,
+    pub structure: ProjectTree,
+    pub metadata: ProjectMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectFile {
+    pub path: PathBuf,
+    pub relative_path: String,
+    pub size_bytes: u64,
+    pub modified: chrono::DateTime<chrono::Utc>,
+    pub file_type: FileType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileType {
+    Source,
+    Config,
+    Documentation,
+    Test,
+    Asset,
+    Other,
+}
+```
+
+### Request/Response Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestParams {
+    pub user_id: String,
+    pub message: String,
+    pub context: ZedContext,
+    pub session_id: Option<String>,
+    pub model_preferences: Option<ModelPreferences>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseParams {
+    pub session_id: String,
+    pub content: String,
+    pub response_type: ResponseType,
+    pub metadata: ResponseMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseType {
+    Text,
+    CodeEdit,
+    MultiFileEdit,
+    Suggestion,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseMetadata {
+    pub model: String,
+    pub tokens_used: Option<u32>,
+    pub processing_time_ms: u32,
+    pub tool_calls: Vec<ToolCall>,
+}
+```
+
+### Tool Integration Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub name: String,
+    pub input: serde_json::Value,
+    pub output: Option<String>,
+    pub success: bool,
+    pub execution_time_ms: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZedToolContext {
+    pub workspace_root: PathBuf,
+    pub current_file: Option<PathBuf>,
+    pub selection: Option<SelectionContext>,
+    pub available_commands: Vec<ZedCommand>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZedCommand {
+    pub name: String,
+    pub description: String,
+    pub parameters: Vec<CommandParameter>,
+    pub category: CommandCategory,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandCategory {
+    FileSystem,
+    Git,
+    Search,
+    Refactor,
+    Debug,
+    Test,
+}
+```
+
+### Git Integration Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitContext {
+    pub repository_root: PathBuf,
+    pub current_branch: String,
+    pub status: GitStatus,
+    pub recent_commits: Vec<GitCommit>,
+    pub staged_changes: Vec<GitChange>,
+    pub unstaged_changes: Vec<GitChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitStatus {
+    pub clean: bool,
+    pub ahead: u32,
+    pub behind: u32,
+    pub staged: u32,
+    pub unstaged: u32,
+    pub untracked: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommit {
+    pub hash: String,
+    pub author: String,
+    pub message: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub files_changed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitChange {
+    pub file_path: PathBuf,
+    pub change_type: GitChangeType,
+    pub lines_added: u32,
+    pub lines_removed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum GitChangeType {
+    Added,
+    Modified,
+    Deleted,
+    Renamed,
+    Copied,
+}
+```
+
+### Diagnostic Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticInfo {
+    pub file_path: PathBuf,
+    pub range: DiagnosticRange,
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+    pub source: Option<String>,
+    pub code: Option<String>,
+    pub related_information: Vec<DiagnosticRelated>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticRange {
+    pub start: Position,
+    pub end: Position,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Information,
+    Hint,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticRelated {
+    pub location: DiagnosticRange,
+    pub message: String,
+}
+```
+
+### Configuration Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZedConfig {
+    pub acp_enabled: bool,
+    pub context_lines: u32,
+    pub max_file_size: u64,
+    pub allowed_file_types: Vec<String>,
+    pub excluded_patterns: Vec<String>,
+    pub git_integration: bool,
+    pub include_git_status: bool,
+    pub include_recent_commits: u8,
+    pub include_current_branch: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPreferences {
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub stream: bool,
+}
+```
+
+### Error Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorParams {
+    pub code: ErrorCode,
+    pub message: String,
+    pub details: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ErrorCode {
+    InvalidRequest,
+    MethodNotFound,
+    InvalidParams,
+    InternalError,
+    ParseError,
+    InvalidMessage,
+    Timeout,
+    Unauthorized,
+    RateLimited,
+    ResourceNotFound,
+    ContextTooLarge,
+    ConfigError,
+    BridgeError,
+}
+```
+
+### Event Streaming Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamEvent {
+    pub session_id: String,
+    pub event_type: StreamEventType,
+    pub data: serde_json::Value,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamEventType {
+    TextDelta,
+    ToolStart,
+    ToolEnd,
+    HITLRequest,
+    Complete,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextDelta {
+    pub content: String,
+    pub position: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HITLRequest {
+    pub request_id: String,
+    pub tool_name: String,
+    pub description: String,
+    pub options: Vec<HITLOption>,
+    pub timeout_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HITLOption {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub risk_level: RiskLevel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+```
+
+### Bridge Implementation Types
+
+```rust
+#[derive(Debug)]
+pub struct ZedBridge {
+    socket_path: PathBuf,
+    connection: Option<UnixStream>,
+    event_sender: mpsc::UnboundedSender<StreamEvent>,
+    config: ZedConfig,
+    active_sessions: HashMap<String, SessionInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub id: String,
+    pub user_id: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub last_activity: chrono::DateTime<chrono::Utc>,
+    pub context: ZedContext,
+    pub model: String,
+}
+
+impl ZedBridge {
+    pub fn new(config: ZedConfig) -> Result<Self, BridgeError>;
+    pub async fn connect(&mut self) -> Result<(), BridgeError>;
+    pub async fn disconnect(&mut self) -> Result<(), BridgeError>;
+    
+    pub async fn send_request(
+        &mut self,
+        request: RequestParams
+    ) -> Result<String, BridgeError>; // Returns session_id
+    
+    pub async fn stream_events(
+        &self
+    ) -> Result<mpsc::UnboundedReceiver<StreamEvent>, BridgeError>;
+    
+    pub async fn respond_hitl(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+        decision: HITLDecision
+    ) -> Result<(), BridgeError>;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HITLDecision {
+    Approve,
+    Deny,
+    Abort,
+}
+```
+
+### Context Extraction Utilities
+
+```rust
+pub mod context_extractor {
+    use super::*;
+    
+    pub fn extract_file_context(
+        file_path: &Path,
+        cursor_pos: Position,
+        context_lines: u32
+    ) -> Result<FileContext, ExtractionError>;
+    
+    pub fn extract_selection_context(
+        content: &str,
+        start: Position,
+        end: Position,
+        surrounding_lines: u32
+    ) -> SelectionContext;
+    
+    pub fn extract_project_context(
+        root_path: &Path,
+        config: &ZedConfig
+    ) -> Result<ProjectContext, ExtractionError>;
+    
+    pub fn extract_git_context(
+        repo_path: &Path
+    ) -> Result<Option<GitContext>, ExtractionError>;
+    
+    pub fn extract_diagnostics(
+        file_path: &Path
+    ) -> Vec<DiagnosticInfo>;
+}
+
+#[derive(Debug, Clone)]
+pub enum ExtractionError {
+    IoError(String),
+    ParseError(String),
+    AccessDenied(String),
+    TooLarge(u64),
+    UnsupportedFormat(String),
+}
+```
+
+## Constants
+
+```rust
+pub const DEFAULT_CONTEXT_LINES: u32 = 50;
+pub const DEFAULT_MAX_FILE_SIZE: u64 = 1_048_576; // 1MB
+pub const DEFAULT_REQUEST_TIMEOUT: u64 = 30; // seconds
+pub const MAX_CONTEXT_CHARACTERS: usize = 100_000;
+pub const MAX_PROJECT_FILES: usize = 10_000;
+
+pub const SUPPORTED_LANGUAGES: &[&str] = &[
+    "rust", "typescript", "javascript", "python", "go", 
+    "c", "cpp", "java", "kotlin", "swift", "ruby", "php",
+    "html", "css", "scss", "json", "yaml", "toml", "xml",
+    "markdown", "sql", "shell", "dockerfile", "makefile"
+];
+
+pub const DEFAULT_EXCLUDED_PATTERNS: &[&str] = &[
+    "target/", "node_modules/", ".git/", "build/", "dist/",
+    "*.log", "*.tmp", "*.cache", ".DS_Store", "Thumbs.db"
+];
+```
+
+## Traits
+
+```rust
+#[async_trait]
+pub trait ACPProvider {
+    async fn initialize(&mut self, params: InitializeParams) -> Result<(), ACPError>;
+    async fn handle_request(&mut self, params: RequestParams) -> Result<ResponseParams, ACPError>;
+    async fn extract_context(&self, file_path: &Path) -> Result<ZedContext, ACPError>;
+    async fn validate_context(&self, context: &ZedContext) -> Result<(), ACPError>;
+}
+
+#[async_trait]
+pub trait ContextValidator {
+    async fn validate_file(&self, file_path: &Path) -> Result<(), ValidationError>;
+    async fn validate_content(&self, content: &str) -> Result<(), ValidationError>;
+    async fn validate_size(&self, size: u64) -> Result<(), ValidationError>;
+}
+
+pub trait ContextBuilder {
+    fn build_file_context(&self, path: &Path) -> Result<FileContext, BuildError>;
+    fn build_selection_context(&self, selection: Selection) -> SelectionContext;
+    fn build_project_context(&self, root: &Path) -> Result<ProjectContext, BuildError>;
+}
+```
+
+## Usage Examples
+
+### Basic Request
+
+```rust
+use agentloop_bridge::zed::{ZedBridge, RequestParams, ZedContext};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = ZedConfig::default();
+    let mut bridge = ZedBridge::new(config)?;
+    bridge.connect().await?;
+
+    let context = ZedContext {
+        file: extract_file_context(&current_file, cursor_pos, 50)?,
+        selection: Some(extract_selection_context(&content, start, end, 10)),
+        project: extract_project_context(&workspace_root, &config)?,
+        diagnostics: extract_diagnostics(&current_file),
+        git: extract_git_context(&workspace_root)?,
+    };
+
+    let request = RequestParams {
+        user_id: "zed-user".to_string(),
+        message: "Explain this function".to_string(),
+        context,
+        session_id: None,
+        model_preferences: None,
+    };
+
+    let session_id = bridge.send_request(request).await?;
+    println!("Started session: {}", session_id);
+
+    Ok(())
+}
+```
+
+### Event Streaming
+
+```rust
+let mut event_stream = bridge.stream_events().await?;
+
+while let Some(event) = event_stream.recv().await {
+    match event.event_type {
+        StreamEventType::TextDelta => {
+            let delta: TextDelta = serde_json::from_value(event.data)?;
+            print!("{}", delta.content);
+        }
+        StreamEventType::HITLRequest => {
+            let hitl: HITLRequest = serde_json::from_value(event.data)?;
+            let decision = prompt_user(&hitl)?;
+            bridge.respond_hitl(&event.session_id, &hitl.request_id, decision).await?;
+        }
+        StreamEventType::Complete => {
+            println!("\nTask completed!");
+            break;
+        }
+        StreamEventType::Error => {
+            eprintln!("Error: {:?}", event.data);
+            break;
+        }
+        _ => {}
+    }
+}
+```
+
+## Key Implementation Notes
+
+1. **Async by Design**: All I/O operations are async using Tokio
+2. **Type Safety**: Extensive use of Rust's type system for correctness
+3. **Memory Efficiency**: Zero-copy deserialization where possible
+4. **Error Handling**: Comprehensive error types with context
+5. **Security**: Built-in validation and sanitization
+6. **Performance**: Lazy loading and caching of context data
+7. **Compatibility**: Full JSON-RPC 2.0 compliance for wire protocol
