@@ -1,0 +1,159 @@
+---
+title: Rust Client Overview
+description: AgentLoop Rust client library for connecting Zed editor and other applications to the AgentLoop server.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## What Is the Rust Client?
+
+The AgentLoop Rust client is a **high-performance client library** that connects to the AgentLoop server via Unix socket. Written in Rust with async/await support, it provides memory-safe access to all AgentLoop features: memory management, HITL approval, session management, and agent execution.
+
+## Philosophy: Client Library, Not Standalone
+
+Like the Slack bridge, the Rust client is a **thin communication layer** that connects applications to the AgentLoop server. All intelligence remains in the server.
+
+```mermaid
+graph LR
+    subgraph "Client Applications"
+        Zed["Zed Editor (ACP)"]
+        CLI["CLI Tool"]
+        Custom["Custom Apps"]
+    end
+
+    subgraph "agentloop-bridge Crate"
+        Client["AgentLoop Client"]
+        ACP["Zed ACP Adapter"]
+    end
+
+    subgraph "AgentLoop Server (Go/Rust)"
+        Intelligence["Memory, Sessions, HITL, Vault, Skills, Caching"]
+    end
+
+    Zed --> ACP
+    CLI --> Client
+    Custom --> Client
+    ACP --> Client
+    Client -->|"Unix Socket<br/>(JSON-RPC 2.0)"| Intelligence
+```
+
+## Key Features
+
+- **Memory Safe**: Written in Rust with zero unsafe code
+- **Async/Await**: Built on Tokio for high-performance concurrent operations  
+- **JSON-RPC 2.0**: Full compatibility with Go AgentLoop server protocol
+- **Event Streaming**: Real-time agent events with backpressure handling
+- **Zed Integration**: Optional ACP adapter for seamless editor integration
+- **Type Safety**: Full type checking for all RPC calls and responses
+
+## What the Client Provides vs Doesn't
+
+| Client Provides | Client Does NOT Provide |
+|---|---|
+| Unix socket connection management | Agent logic or execution |
+| JSON-RPC 2.0 protocol implementation | Memory or context management |
+| Event streaming with backpressure | Session lifecycle decisions |
+| Type-safe API for all server methods | HITL decision making (only relays) |
+| Reconnection and error handling | Prompt building or caching |
+| Zed ACP integration adapter | Skills or tool management |
+
+## Protocol Compatibility
+
+The Rust client maintains **100% API compatibility** with the Go AgentLoop server:
+
+| AgentLoop Method | Client Method | Purpose |
+|---|---|---|
+| `task.start` | `start_task()` | Begin new agent task |
+| `task.steer` | `steer_task()` | Redirect running task |
+| `task.abort` | `abort_task()` | Stop current task |
+| `hitl.respond` | `respond_hitl()` | Approve/deny HITL request |
+| `session.list` | Available via raw RPC | List user sessions |
+| `memory.get` | Available via raw RPC | Get user memory context |
+| `health.check` | `health_check()` | Server health status |
+
+## Event Streaming
+
+Real-time events from the server are delivered via async channels:
+
+```rust
+let mut event_rx = client.take_event_receiver().unwrap();
+while let Some(event) = event_rx.recv().await {
+    match event {
+        AgentEvent::Text { session_id, content } => {
+            println!("Agent output: {}", content);
+        }
+        AgentEvent::ToolUse { tool_name, .. } => {
+            println!("Using tool: {}", tool_name);
+        }
+        AgentEvent::HITLRequest { request_id, details, .. } => {
+            // Show approval dialog to user
+            let decision = show_approval_dialog(&details).await;
+            client.respond_hitl(&session_id, &request_id, decision).await?;
+        }
+        AgentEvent::Done { stats, .. } => {
+            println!("Task completed: {} tool calls", stats.tool_calls);
+            break;
+        }
+        _ => {}
+    }
+}
+```
+
+## Use Cases
+
+### Zed Editor Integration
+
+The `zed-acp` feature provides a specialized adapter for Zed's Adaptive Code Provider system:
+
+```rust
+use agentloop_bridge::zed_acp::ZedACPAdapter;
+
+let mut adapter = ZedACPAdapter::new(config, user_id);
+let result = adapter.execute_coding_task(
+    "Fix the compilation errors in this Rust project",
+    Some("/path/to/project")
+).await?;
+```
+
+### Custom CLI Tools
+
+Direct client integration for command-line tools:
+
+```rust
+use agentloop_bridge::{AgentLoopClient, ClientConfig};
+
+let mut client = AgentLoopClient::new(ClientConfig::default());
+client.connect().await?;
+
+let session_id = client.start_task(
+    "user123",
+    "Analyze this codebase for security issues",
+    Some(workspace_path),
+    "custom-cli"
+).await?;
+
+let stats = client.wait_for_completion(&session_id).await?;
+```
+
+### Embedded Applications
+
+The client can be embedded in larger Rust applications to add AI capabilities:
+
+```rust
+// In your application
+let mut agent_client = AgentLoopClient::new(config);
+// Agent capabilities are now available throughout your app
+```
+
+## Migration Path
+
+The Rust client can connect to existing Go AgentLoop servers without any changes:
+
+1. **Same Protocol**: Uses identical JSON-RPC 2.0 over Unix socket
+2. **Same Features**: Access to all server capabilities (memory, HITL, sessions)  
+3. **Same Vault**: Shares the same Markdown+YAML vault format
+4. **Gradual Adoption**: Can be deployed alongside existing clients
+
+<Aside type="note">
+  The Rust client is designed to complement, not replace, existing AgentLoop infrastructure. It provides a high-performance, type-safe way to integrate Rust applications with AgentLoop.
+</Aside>
