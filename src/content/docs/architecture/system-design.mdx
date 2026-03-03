@@ -9,10 +9,36 @@ import { Aside } from '@astrojs/starlight/components';
 
 AgentLoop runs as a persistent server process rather than an embedded library. This design enables:
 
-- **Multi-client support** — CLI, Slack, and future clients connect to the same server simultaneously
+- **Multi-client support** — CLI, Slack, Zed, and future clients connect to the same server simultaneously
 - **Persistent memory** — User profiles and conversation history survive across sessions and restarts
 - **Shared state** — All clients see the same sessions, memory, and skills
 - **Process isolation** — Pi subprocesses are managed centrally with consistent security policies
+
+## Client Architecture Patterns
+
+AgentLoop supports multiple client patterns, each optimized for different use cases:
+
+### Direct TUI Client (Go)
+- **Repository**: Main `agentloop` repository
+- **Language**: Go with Bubble Tea TUI
+- **Connection**: Direct Unix socket with full session management
+- **Use case**: Command-line interface, development, testing
+
+### Bridge Clients (Node.js, Rust)
+- **Repositories**: `agentloop-slack`, `agentloop-rs`
+- **Languages**: Node.js (Slack), Rust (Zed ACP)
+- **Connection**: Bridge pattern - translate external protocols to AgentLoop socket API
+- **Use cases**: Platform-specific integrations (Slack, Zed editor)
+
+### Future Web Clients
+- **Repository**: Planned `agentloop-web`
+- **Languages**: React/TypeScript
+- **Connection**: WebSocket bridge to Unix socket
+- **Use cases**: Web dashboard, mobile apps
+
+<Aside type="note">
+  **Important**: Only the **Go server** contains agent logic. All clients (Go, Node.js, Rust) are thin communication layers that connect their respective platforms to the central server.
+</Aside>
 
 ## Architecture
 
@@ -21,10 +47,11 @@ graph TD
     subgraph Clients
         CLI["CLI Client (Go TUI)"]
         Slack["Slack Bridge (Node.js)"]
+        Zed["Zed ACP Bridge (Rust)"]
         Web["Future: Web UI, Mobile"]
     end
 
-    subgraph "AgentLoop Server (Go)"
+    subgraph "AgentLoop Server (Go Only)"
         API["Socket API (JSON-RPC 2.0)"]
         SM["Session Manager"]
         Mem["Memory Engine"]
@@ -42,6 +69,7 @@ graph TD
 
     CLI -->|Unix Socket| API
     Slack -->|Unix Socket| API
+    Zed -->|Unix Socket via ACP| API
     Web -->|Unix Socket| API
 
     API --> SM

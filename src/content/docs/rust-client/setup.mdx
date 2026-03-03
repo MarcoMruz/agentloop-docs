@@ -1,6 +1,6 @@
 ---
-title: Rust Client Setup
-description: How to install, configure, and use the AgentLoop Rust client library.
+title: Rust ACP Bridge Setup
+description: How to install and configure the AgentLoop Rust ACP bridge for Zed editor integration.
 ---
 
 import { Aside, Code, FileTree, Tabs, TabItem } from '@astrojs/starlight/components';
@@ -10,7 +10,8 @@ import { Aside, Code, FileTree, Tabs, TabItem } from '@astrojs/starlight/compone
 ### Prerequisites
 
 - **Rust 1.70+**: Install via [rustup](https://rustup.rs/)
-- **AgentLoop Server**: Either Go or Rust implementation running
+- **AgentLoop Go Server**: Must be installed and running
+- **Zed Editor**: Latest version with ACP support
 - **Unix-like OS**: Linux, macOS, or WSL2 on Windows
 
 ### Add to Your Project
@@ -95,25 +96,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Server Setup
+## AgentLoop Go Server Setup
 
-### Using Go AgentLoop Server (Recommended)
+The Rust ACP bridge requires the **AgentLoop Go server** to be running. The bridge does not include any server functionality.
 
-<Tabs>
-<TabItem label="Install & Run">
+### Install & Run Go Server
 
 ```bash
-# Install Go server
+# Install Go server from main AgentLoop repository
 cd /path/to/agentloop
 go build -o agentloop-server ./cmd/agentloop-server
 
-# Start server
+# Start server (must be running before using Zed integration)
 ./agentloop-server
 # Server listening on ~/.local/share/agentloop/agentloop.sock
 ```
 
-</TabItem>
-<TabItem label="Configuration">
+### Server Configuration
 
 ```yaml title="~/.config/agentloop/agentloop.yaml"
 server:
@@ -132,33 +131,17 @@ sessions:
   max_concurrent: 10
   max_per_user: 5
   timeout_seconds: 3600
+
+# Security settings apply to all clients including Rust bridge
+security:
+  allowed_paths: ["~/dev", "~/projects"]
+  injection_protection:
+    enabled: true
 ```
 
-</TabItem>
-</Tabs>
-
-### Using Rust AgentLoop Server (Alternative)
-
-<Tabs>
-<TabItem label="Build & Run">
-
-```bash
-# Build Rust server
-cd /path/to/agentloop-rs
-cargo build --release --bin agentloop-server
-
-# Start server
-./target/release/agentloop-server
-# Server listening on ~/.local/share/agentloop/agentloop.sock
-```
-
-</TabItem>
-<TabItem label="Configuration">
-
-Same YAML configuration format as the Go version. The Rust server maintains full compatibility.
-
-</TabItem>
-</Tabs>
+<Aside type="caution">
+  **Server Requirement**: The Rust bridge cannot function without the AgentLoop Go server running. Make sure `./agentloop-server` is running before attempting to use the Zed integration.
+</Aside>
 
 ## Testing the Connection
 

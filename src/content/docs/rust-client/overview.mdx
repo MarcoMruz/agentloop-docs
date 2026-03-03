@@ -1,50 +1,55 @@
 ---
-title: Rust Client Overview
-description: AgentLoop Rust client library for connecting Zed editor and other applications to the AgentLoop server.
+title: Rust ACP Bridge Overview
+description: AgentLoop Rust bridge for connecting Zed editor to the AgentLoop Go server via ACP protocol.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-## What Is the Rust Client?
+## What Is the Rust ACP Bridge?
 
-The AgentLoop Rust client is a **high-performance client library** that connects to the AgentLoop server via Unix socket. Written in Rust with async/await support, it provides memory-safe access to all AgentLoop features: memory management, HITL approval, session management, and agent execution.
+The AgentLoop Rust bridge is a **specialized ACP communication library** designed exclusively for **Zed editor integration**. It connects Zed editor to the existing **AgentLoop Go server** via Unix socket using the Adaptive Code Provider (ACP) protocol. Written in Rust with async/await support, it provides type-safe access to all AgentLoop server features.
 
-## Philosophy: Client Library, Not Standalone
+<Aside type="important">
+  **Important Clarification**: The `agentloop-rs` repository contains **ONLY a client bridge**, not a server implementation. All server functionality remains in the Go AgentLoop server. This bridge exists purely to enable Zed editor integration with AgentLoop.
+</Aside>
 
-Like the Slack bridge, the Rust client is a **thin communication layer** that connects applications to the AgentLoop server. All intelligence remains in the server.
+## Philosophy: ACP Bridge, Not Server
+
+The Rust client is a **thin communication bridge** specifically designed for Zed editor's ACP system. It connects to the existing **AgentLoop Go server** - there is no Rust server implementation. All intelligence remains in the Go server.
 
 ```mermaid
 graph LR
-    subgraph "Client Applications"
-        Zed["Zed Editor (ACP)"]
-        CLI["CLI Tool"]
-        Custom["Custom Apps"]
+    subgraph "Zed Editor"
+        UI["Zed UI"]
+        ACP_System["ACP System"]
     end
 
-    subgraph "agentloop-bridge Crate"
-        Client["AgentLoop Client"]
-        ACP["Zed ACP Adapter"]
+    subgraph "agentloop-rs (Bridge)"
+        Adapter["Zed ACP Adapter"]
+        Client["Unix Socket Client"]
     end
 
-    subgraph "AgentLoop Server (Go/Rust)"
-        Intelligence["Memory, Sessions, HITL, Vault, Skills, Caching"]
+    subgraph "AgentLoop Server (Go Only)"
+        Server["Go Server Process"]
+        Intelligence["Memory, Sessions, HITL, Vault, Skills, Pi"]
     end
 
-    Zed --> ACP
-    CLI --> Client
-    Custom --> Client
-    ACP --> Client
-    Client -->|"Unix Socket<br/>(JSON-RPC 2.0)"| Intelligence
+    UI --> ACP_System
+    ACP_System --> Adapter
+    Adapter --> Client
+    Client -->|"Unix Socket<br/>(JSON-RPC 2.0)"| Server
+    Server --> Intelligence
 ```
 
 ## Key Features
 
-- **Memory Safe**: Written in Rust with zero unsafe code
-- **Async/Await**: Built on Tokio for high-performance concurrent operations  
-- **JSON-RPC 2.0**: Full compatibility with Go AgentLoop server protocol
+- **Zed ACP Integration**: Primary focus on Zed editor's Adaptive Code Provider system
+- **Memory Safe**: Written in Rust with zero unsafe code  
+- **Async/Await**: Built on Tokio for high-performance concurrent operations
+- **JSON-RPC 2.0**: Full compatibility with AgentLoop Go server protocol
 - **Event Streaming**: Real-time agent events with backpressure handling
-- **Zed Integration**: Optional ACP adapter for seamless editor integration
 - **Type Safety**: Full type checking for all RPC calls and responses
+- **Bridge Architecture**: Thin layer that forwards ACP requests to Go server
 
 ## What the Client Provides vs Doesn't
 
@@ -145,15 +150,15 @@ let mut agent_client = AgentLoopClient::new(config);
 // Agent capabilities are now available throughout your app
 ```
 
-## Migration Path
+## Integration with Existing AgentLoop
 
-The Rust client can connect to existing Go AgentLoop servers without any changes:
+The Rust ACP bridge connects to existing **AgentLoop Go servers** without requiring any changes:
 
-1. **Same Protocol**: Uses identical JSON-RPC 2.0 over Unix socket
-2. **Same Features**: Access to all server capabilities (memory, HITL, sessions)  
+1. **Same Protocol**: Uses identical JSON-RPC 2.0 over Unix socket  
+2. **Same Features**: Access to all Go server capabilities (memory, HITL, sessions)
 3. **Same Vault**: Shares the same Markdown+YAML vault format
-4. **Gradual Adoption**: Can be deployed alongside existing clients
+4. **Zero Disruption**: Works alongside existing CLI and Slack bridge clients
 
 <Aside type="note">
-  The Rust client is designed to complement, not replace, existing AgentLoop infrastructure. It provides a high-performance, type-safe way to integrate Rust applications with AgentLoop.
+  The Rust bridge is designed to add Zed editor support to existing AgentLoop Go installations. It does NOT replace any server components - all intelligence remains in the Go server.
 </Aside>
