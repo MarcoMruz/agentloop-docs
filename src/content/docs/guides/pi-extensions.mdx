@@ -104,6 +104,11 @@ const allowedPaths = (process.env.AGENTLOOP_ALLOWED_PATHS || "").split(",");
 | `AGENTLOOP_ALLOWED_PATHS` | security-policy.ts | Comma-separated paths |
 | `AGENTLOOP_DOCKER_ALLOWED` | docker-guard.ts | Comma-separated subcommands |
 | `AGENTLOOP_DOCKER_BLOCKED_VOLS` | docker-guard.ts | Comma-separated paths |
+| `AGENTLOOP_INJECTION_PROTECTION` | **prompt-injection-guard.ts** | **"true"/"false"** |
+| `AGENTLOOP_WHITELIST_SOURCES` | **prompt-injection-guard.ts** | **Comma-separated paths** |
+| `AGENTLOOP_BLOCKED_KEYWORDS` | **prompt-injection-guard.ts** | **Comma-separated keywords** |
+| `AGENTLOOP_REQUIRE_APPROVAL` | **prompt-injection-guard.ts** | **Comma-separated patterns** |
+| `AGENTLOOP_MAX_CONTENT_LENGTH` | **prompt-injection-guard.ts** | **Number (bytes)** |
 
 Follow the `AGENTLOOP_*` naming convention for any new extension config.
 
@@ -123,6 +128,39 @@ Validates docker commands:
 
 - **Subcommand whitelist:** Only allowed subcommands can run (default: `ps,logs,images,build,compose,inspect,stats`)
 - **Volume mount check:** Blocks mounts to sensitive paths (`/etc`, `/var`, `/root`, `/proc`, `/sys`, `/dev`)
+
+### prompt-injection-guard.ts ⭐ NEW
+
+Advanced protection against prompt injection attacks from various sources:
+
+**Risk Source Detection:**
+- **Skills folder** → Medium risk (can execute code)
+- **Node modules** → High risk (external dependencies)  
+- **Email attachments** → High risk (external content)
+- **Cloud files** → High risk (untrusted sources)
+- **Fetch responses** → Medium risk (network content)
+- **Git repos** → Medium risk (potentially malicious)
+
+**Content Analysis:**
+- **Injection patterns:** `ignore previous instructions`, `forget everything above`, `act as if you are`
+- **Sensitive data:** API keys, tokens, emails, IP addresses
+- **Dangerous commands:** `curl | bash`, `eval $()`, `rm -rf /`
+- **Content size limits:** 50KB maximum by default
+
+**Environment Configuration:**
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AGENTLOOP_INJECTION_PROTECTION` | Enable/disable protection | `true` |
+| `AGENTLOOP_WHITELIST_SOURCES` | Comma-separated allowed paths | Config whitelist |
+| `AGENTLOOP_BLOCKED_KEYWORDS` | Injection trigger keywords | `ignore,forget,roleplay,API_KEY` |
+| `AGENTLOOP_MAX_CONTENT_LENGTH` | Max file size in bytes | `50000` |
+
+**Approval Requests:**
+- File reads from non-whitelisted sources
+- Bash commands with injection patterns
+- Network requests from skills (`curl`, `wget`, `fetch`)
+- Write operations with suspicious content
+- Node modules directory access
 
 ## How to Test
 
