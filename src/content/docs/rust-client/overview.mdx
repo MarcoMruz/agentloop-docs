@@ -9,7 +9,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 The AgentLoop Rust bridge is a **specialized ACP communication library** designed exclusively for **Zed editor integration**. It connects Zed editor to the existing **AgentLoop Go server** via Unix socket using the Adaptive Code Provider (ACP) protocol. Written in Rust with async/await support, it provides type-safe access to all AgentLoop server features.
 
-<Aside type="important">
+<Aside type="caution">
   **Important Clarification**: The `agentloop-rs` repository contains **ONLY a client bridge**, not a server implementation. All server functionality remains in the Go AgentLoop server. This bridge exists purely to enable Zed editor integration with AgentLoop.
 </Aside>
 
