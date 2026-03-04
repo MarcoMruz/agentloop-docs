@@ -143,6 +143,10 @@ security:
   **Server Requirement**: The Rust bridge cannot function without the AgentLoop Go server running. Make sure `./agentloop-server` is running before attempting to use the Zed integration.
 </Aside>
 
+<Aside type="note">
+  **Automatic Memory Management**: The AgentLoop Go server automatically handles all memory management, conversation logging, skill detection, and session persistence. The Rust bridge is purely a communication layer - no additional memory configuration is needed.
+</Aside>
+
 ## Testing the Connection
 
 ### Health Check

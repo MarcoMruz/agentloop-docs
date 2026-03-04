@@ -9,6 +9,10 @@ import { Aside, Code, FileTree, Tabs, TabItem } from '@astrojs/starlight/compone
 
 The AgentLoop Rust ACP bridge provides **dedicated integration** between Zed editor and the **AgentLoop Go server** through the **Adaptive Code Provider (ACP)** system. This enables seamless AI assistance directly within Zed with full access to AgentLoop's memory management, HITL approval, and session handling powered by the Go server.
 
+<Aside type="important">
+  **Memory & Session Management**: The AgentLoop Go server **automatically handles all memory management, conversation logging, and session persistence**. The Rust bridge simply forwards requests - no memory extensions or additional persistence logic is needed in the client.
+</Aside>
+
 ## Architecture
 
 ```mermaid
@@ -26,10 +30,10 @@ graph TD
 
     subgraph "AgentLoop Go Server"
         Server["Server Process"]  
-        Memory["Memory Engine"]
+        Memory["Memory Engine<br/>(Automatic)"]
         Agent["Agent Core + Pi"]
         HITL["HITL Gate"]
-        Vault["Vault Storage"]
+        Vault["Vault Storage<br/>(Automatic)"]
     end
 
     UI --> ACP
@@ -42,6 +46,8 @@ graph TD
     Server --> HITL
     Server --> Vault
     HITL -->|"Approval Dialog"| UI
+    
+    note1["Note: Go server automatically<br/>handles memory, sessions,<br/>and vault persistence"]
 ```
 
 ## Prerequisites
@@ -289,6 +295,11 @@ pub async fn handle_hitl_approval(
     }
   }
 }
+```
+
+<Aside type="note">
+  **No Memory Configuration Needed**: Memory management, conversation history, and session persistence are handled automatically by the AgentLoop Go server. The Rust bridge only needs connection settings.
+</Aside>
 ```
 
 ### Workspace Settings
