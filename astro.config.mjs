@@ -80,6 +80,16 @@ export default defineConfig({
           ],
         },
         {
+          label: "Rust Client",
+          badge: { text: "Library", variant: "success" },
+          items: [
+            { label: "Overview", slug: "rust-client/overview" },
+            { label: "Setup", slug: "rust-client/setup" },
+            { label: "Zed Integration", slug: "rust-client/zed-integration" },
+            { label: "Event Handling", slug: "rust-client/event-handling" },
+          ],
+        },
+        {
           label: "Slack Bridge",
           badge: { text: "Companion", variant: "note" },
           items: [
