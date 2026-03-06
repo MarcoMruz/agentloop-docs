@@ -20,10 +20,10 @@ import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
 const ext: ExtensionFactory = (pi) => {
   const logPath = process.env.AGENTLOOP_TOOL_LOG || "/tmp/agentloop-tools.log";
 
-  pi.on("toolCall", (ctx) => {
-    const entry = `[${new Date().toISOString()}] ${ctx.tool.name}: ${JSON.stringify(ctx.tool.input).slice(0, 200)}\n`;
+  pi.on("tool_call", async (event, _ctx) => {
+    const entry = `[${new Date().toISOString()}] ${event.toolName}: ${JSON.stringify(event.input).slice(0, 200)}\n`;
     appendFileSync(logPath, entry);
-    return { action: "continue" };
+    return undefined;
   });
 };
 
@@ -32,9 +32,9 @@ export default ext;
 
 ### What This Does
 
-1. **Intercepts every tool call** via `pi.on("toolCall", ...)`
+1. **Intercepts every tool call** via `pi.on("tool_call", ...)`
 2. **Logs tool name and input** to a file, truncated to 200 characters
-3. **Returns `{ action: "continue" }`** to allow the tool to execute normally
+3. **Returns `undefined`** to allow the tool to execute normally
 
 ## Step 2: Configure
 
@@ -78,12 +78,12 @@ const ext: ExtensionFactory = (pi) => {
   const logPath = process.env.AGENTLOOP_TOOL_LOG || "/tmp/agentloop-tools.log";
   const logTools = new Set(["bash", "write", "edit"]);
 
-  pi.on("toolCall", (ctx) => {
-    if (logTools.has(ctx.tool.name)) {
-      const entry = `[${new Date().toISOString()}] ${ctx.tool.name}: ${JSON.stringify(ctx.tool.input).slice(0, 200)}\n`;
+  pi.on("tool_call", async (event, _ctx) => {
+    if (logTools.has(event.toolName)) {
+      const entry = `[${new Date().toISOString()}] ${event.toolName}: ${JSON.stringify(event.input).slice(0, 200)}\n`;
       appendFileSync(logPath, entry);
     }
-    return { action: "continue" };
+    return undefined;
   });
 };
 ```
@@ -93,17 +93,23 @@ const ext: ExtensionFactory = (pi) => {
 Request human approval before executing destructive tools:
 
 ```typescript
-pi.on("toolCall", async (ctx) => {
-  if (ctx.tool.name === "bash" && ctx.tool.input.command?.includes("rm")) {
-    const approved = await ctx.ui.confirm(
-      "Destructive Command",
-      `${ctx.tool.input.command}`
-    );
-    if (!approved) {
-      return { action: "block", message: "User denied destructive command" };
+pi.on("tool_call", async (event, ctx) => {
+  if (event.toolName === "bash") {
+    const command = event.input.command as string;
+    if (command.includes("rm")) {
+      if (!ctx.hasUI) {
+        return { block: true, reason: "Destructive command blocked (no UI)" };
+      }
+      const approved = await ctx.ui.confirm(
+        "Destructive Command",
+        command
+      );
+      if (!approved) {
+        return { block: true, reason: "User denied destructive command" };
+      }
     }
   }
-  return { action: "continue" };
+  return undefined;
 });
 ```
 

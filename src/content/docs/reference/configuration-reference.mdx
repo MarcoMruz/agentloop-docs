@@ -52,9 +52,10 @@ description: Complete reference for all AgentLoop configuration fields, types, d
 
 | YAML Path | Go Type | Default | Description |
 |-----------|---------|---------|-------------|
-| `hitl.always_pause_tools` | `[]string` | `[docker, git push, rm -r, curl, wget]` | Tools that always require approval |
+| `hitl.always_pause_tools` | `[]string` | `[docker, git push, rm -r, curl, wget, bash, write, edit]` | Tools that always require approval |
 | `hitl.timeout_seconds` | `int` | `300` | Seconds before auto-decision |
 | `hitl.timeout_action` | `string` | `deny` | Action on timeout: `deny` or `approve` |
+| `hitl.force_hitl_keywords` | `[]string` | `[sudo, chmod, chown, systemctl, npm install, pip install, yarn add]` | Bash keywords that trigger `force-hitl.ts` approval gate |
 
 ## Security
 
@@ -129,9 +130,10 @@ sessions:
   stuck_threshold: 3
   evict_lru: true
 hitl:
-  always_pause_tools: [docker, git push, rm -r, curl, wget]
+  always_pause_tools: [docker, git push, rm -r, curl, wget, bash, write, edit]
   timeout_seconds: 300
   timeout_action: deny
+  force_hitl_keywords: [sudo, chmod, chown, systemctl, npm install, pip install, yarn add]
 security:
   allowed_paths: [~/projects, ~/tmp, ~/agentloop-sandbox]
   blocked_env_prefixes: [ANTHROPIC_, OPENAI_, BRAVE_SEARCH_, N8N_WEBHOOK_, AWS_SECRET, GITHUB_TOKEN, SECRET_KEY, PRIVATE_KEY]

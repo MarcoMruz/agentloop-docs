@@ -30,28 +30,29 @@ export default ext;
 
 ## Intercepting Tool Calls
 
-Use `pi.on("toolCall", handler)` to intercept tool calls before they execute:
+Use `pi.on("tool_call", handler)` to intercept tool calls before they execute:
 
 ```typescript
 const ext: ExtensionFactory = (pi) => {
-  pi.on("toolCall", (ctx) => {
+  pi.on("tool_call", async (event, ctx) => {
     // Inspect the tool call
-    console.error(`Tool: ${ctx.tool.name}, Input: ${JSON.stringify(ctx.tool.input)}`);
+    console.error(`Tool: ${event.toolName}, Input: ${JSON.stringify(event.input)}`);
 
     // Allow it to proceed
-    return { action: "continue" };
+    return undefined;
 
     // Or block it
-    // return { action: "block", message: "Not allowed" };
+    // return { block: true, reason: "Not allowed" };
   });
 };
 ```
 
-The handler receives a context object with:
-- `ctx.tool.name` — Tool name (e.g., `bash`, `edit`, `write`)
-- `ctx.tool.input` — Tool input parameters
+The handler receives the event and a context object:
+- `event.toolName` — Tool name (e.g., `bash`, `edit`, `write`)
+- `event.toolCallId` — Unique ID for this call
+- `event.input` — Tool input parameters (cast individual fields: `event.input.command as string`)
 
-Return `{ action: "continue" }` to allow or `{ action: "block", message: "reason" }` to deny.
+Return `undefined` to allow or `{ block: true, reason: "..." }` to deny.
 
 ## Adding Custom Tools
 
@@ -75,21 +76,30 @@ const ext: ExtensionFactory = (pi) => {
 Request human approval for specific operations:
 
 ```typescript
-pi.on("toolCall", async (ctx) => {
-  if (ctx.tool.name === "bash" && ctx.tool.input.command?.includes("rm")) {
-    const approved = await ctx.ui.confirm(
-      "Destructive Operation",
-      `Command: ${ctx.tool.input.command}`
-    );
-    if (!approved) {
-      return { action: "block", message: "User denied the operation" };
+pi.on("tool_call", async (event, ctx) => {
+  if (event.toolName === "bash") {
+    const command = event.input.command as string;
+    if (command.includes("rm")) {
+      if (!ctx.hasUI) {
+        // No UI available (e.g. print mode) — block by default for safety
+        return { block: true, reason: "Destructive command blocked (no UI)" };
+      }
+      const approved = await ctx.ui.confirm(
+        "Destructive Operation",
+        `Command: ${command}`
+      );
+      if (!approved) {
+        return { block: true, reason: "User denied the operation" };
+      }
     }
   }
-  return { action: "continue" };
+  return undefined;
 });
 ```
 
 `ctx.ui.confirm(title, details)` returns a `Promise<boolean>` — it sends an `extension_ui_request` through the AgentLoop HITL flow and waits for the user's decision.
+
+Always guard `ctx.ui` calls with `if (!ctx.hasUI)` — in non-interactive modes (print, JSON) the confirm dialog is a no-op and returns `false`, so without the guard you would accidentally block all tool calls.
 
 ## Environment Variables
 
@@ -104,11 +114,12 @@ const allowedPaths = (process.env.AGENTLOOP_ALLOWED_PATHS || "").split(",");
 | `AGENTLOOP_ALLOWED_PATHS` | security-policy.ts | Comma-separated paths |
 | `AGENTLOOP_DOCKER_ALLOWED` | docker-guard.ts | Comma-separated subcommands |
 | `AGENTLOOP_DOCKER_BLOCKED_VOLS` | docker-guard.ts | Comma-separated paths |
-| `AGENTLOOP_INJECTION_PROTECTION` | **prompt-injection-guard.ts** | **"true"/"false"** |
-| `AGENTLOOP_WHITELIST_SOURCES` | **prompt-injection-guard.ts** | **Comma-separated paths** |
-| `AGENTLOOP_BLOCKED_KEYWORDS` | **prompt-injection-guard.ts** | **Comma-separated keywords** |
-| `AGENTLOOP_REQUIRE_APPROVAL` | **prompt-injection-guard.ts** | **Comma-separated patterns** |
-| `AGENTLOOP_MAX_CONTENT_LENGTH` | **prompt-injection-guard.ts** | **Number (bytes)** |
+| `AGENTLOOP_HITL_FORCE_KEYWORDS` | force-hitl.ts | Comma-separated bash keywords that trigger approval |
+| `AGENTLOOP_INJECTION_PROTECTION` | prompt-injection-guard.ts | `"true"` / `"false"` |
+| `AGENTLOOP_WHITELIST_SOURCES` | prompt-injection-guard.ts | Comma-separated paths |
+| `AGENTLOOP_BLOCKED_KEYWORDS` | prompt-injection-guard.ts | Comma-separated keywords |
+| `AGENTLOOP_REQUIRE_APPROVAL` | prompt-injection-guard.ts | Comma-separated patterns |
+| `AGENTLOOP_MAX_CONTENT_LENGTH` | prompt-injection-guard.ts | Number (bytes) |
 
 Follow the `AGENTLOOP_*` naming convention for any new extension config.
 
@@ -124,12 +135,30 @@ Blocks dangerous bash patterns and enforces file write path restrictions:
 
 ### docker-guard.ts
 
-Validates docker commands:
+Validates docker commands and requires HITL approval for all allowed ones:
 
-- **Subcommand whitelist:** Only allowed subcommands can run (default: `ps,logs,images,build,compose,inspect,stats`)
-- **Volume mount check:** Blocks mounts to sensitive paths (`/etc`, `/var`, `/root`, `/proc`, `/sys`, `/dev`)
+- **Subcommand whitelist:** Disallowed subcommands are blocked immediately (default allowed: `ps,logs,images,build,compose,inspect,stats`)
+- **Volume mount check:** Blocks mounts to sensitive paths (`/etc`, `/var`, `/root`, `/proc`, `/sys`, `/dev`) immediately
+- **HITL gate:** All commands that pass the above checks still require explicit human approval via `ctx.ui.confirm()`
 
-### prompt-injection-guard.ts ⭐ NEW
+### force-hitl.ts
+
+Forces HITL approval for bash commands containing configurable keywords. Keywords are loaded from `hitl.force_hitl_keywords` in `agentloop.yaml` and injected as `AGENTLOOP_HITL_FORCE_KEYWORDS`.
+
+**Default keywords:** `sudo`, `chmod`, `chown`, `systemctl`, `npm install`, `pip install`, `yarn add`
+
+To customise, edit `agentloop.yaml`:
+
+```yaml
+hitl:
+  force_hitl_keywords:
+    - sudo
+    - chmod
+    - systemctl
+    - npm install
+```
+
+### prompt-injection-guard.ts
 
 Advanced protection against prompt injection attacks from various sources:
 
