@@ -47,17 +47,20 @@ sequenceDiagram
 Pi extensions can request human approval for any tool call using `ctx.ui.confirm()`:
 
 ```typescript
-pi.on("toolCall", (ctx) => {
-  if (isDangerous(ctx.tool)) {
+pi.on("tool_call", async (event, ctx) => {
+  if (isDangerous(event.toolName, event.input)) {
+    if (!ctx.hasUI) {
+      return { block: true, reason: "Blocked (no UI for confirmation)" };
+    }
     const approved = await ctx.ui.confirm(
-      `Execute: ${ctx.tool.name}`,
-      `Command: ${JSON.stringify(ctx.tool.input)}`
+      `Execute: ${event.toolName}`,
+      `Input: ${JSON.stringify(event.input)}`
     );
     if (!approved) {
-      return { action: "block", message: "Denied by user" };
+      return { block: true, reason: "Denied by user" };
     }
   }
-  return { action: "continue" };
+  return undefined;
 });
 ```
 
@@ -73,6 +76,9 @@ Certain tools always require HITL approval regardless of their input. Configure 
 - `rm -r`
 - `curl`
 - `wget`
+- `bash`
+- `write`
+- `edit`
 
 ## HITL Request Payload
 
@@ -111,7 +117,7 @@ Clients respond with `hitl.respond`:
 
 **Decision values:**
 - `approve` — Execute the tool call
-- `deny` (or `skip`) — Skip the tool call, agent continues
+- `deny` — Skip the tool call, agent continues
 - `abort` — Cancel the entire session
 
 ## Timeout

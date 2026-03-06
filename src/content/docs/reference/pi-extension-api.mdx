@@ -27,35 +27,42 @@ export default ext;
 
 ## Event Hooks
 
-### `pi.on("toolCall", handler)`
+### `pi.on("tool_call", handler)`
 
 Intercept tool calls before execution.
 
 ```typescript
-pi.on("toolCall", (ctx: ToolCallContext) => {
+pi.on("tool_call", async (event, ctx) => {
   // Inspect and decide
-  return { action: "continue" };
+  return undefined;
   // or
-  return { action: "block", message: "Reason for blocking" };
+  return { block: true, reason: "Reason for blocking" };
 });
 ```
 
-**ToolCallContext:**
+**Event fields:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ctx.tool.name` | `string` | Tool name (e.g., `bash`, `edit`, `write`) |
-| `ctx.tool.input` | `Record<string, any>` | Tool input parameters |
-| `ctx.ui` | `UIContext` | UI methods for HITL |
+| `event.toolName` | `string` | Tool name (e.g., `bash`, `edit`, `write`) |
+| `event.toolCallId` | `string` | Unique ID for this call |
+| `event.input` | `Record<string, any>` | Tool input parameters — cast fields explicitly: `event.input.command as string` |
+
+**Context fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ctx.ui` | `UIContext` | UI methods for HITL dialogs |
+| `ctx.hasUI` | `boolean` | `false` in print/JSON mode — check before calling `ctx.ui` methods |
 
 **Return value:**
 
-| Action | Behavior |
-|--------|----------|
-| `{ action: "continue" }` | Allow tool execution |
-| `{ action: "block", message?: string }` | Block execution, optional reason |
+| Value | Behavior |
+|-------|----------|
+| `undefined` (or nothing) | Allow tool execution |
+| `{ block: true, reason?: string }` | Block execution, optional reason logged |
 
-Handlers can be `async` — the runtime awaits them.
+Handlers must be `async` when using `ctx.ui` methods — the runtime awaits them.
 
 ## Tool Registration
 
@@ -94,13 +101,28 @@ pi.addTool({
 Trigger a HITL approval flow.
 
 ```typescript
-const approved: boolean = await ctx.ui.confirm(
-  "Destructive Operation",
-  "rm -rf ~/old-project"
-);
+pi.on("tool_call", async (event, ctx) => {
+  if (event.toolName === "bash") {
+    const command = event.input.command as string;
+
+    if (!ctx.hasUI) {
+      // Block by default when no UI is available (print/JSON mode)
+      return { block: true, reason: "Command blocked (no UI for confirmation)" };
+    }
+
+    const approved = await ctx.ui.confirm(
+      "Destructive Operation",
+      `Command: ${command}`
+    );
+    if (!approved) {
+      return { block: true, reason: "Denied by user" };
+    }
+  }
+  return undefined;
+});
 ```
 
-**Returns:** `Promise<boolean>` — `true` if approved, `false` if denied
+**Returns:** `Promise<boolean>` — `true` if approved, `false` if denied or timed out
 
 **Flow:**
 1. Sends `extension_ui_request` to AgentLoop bridge
@@ -110,6 +132,8 @@ const approved: boolean = await ctx.ui.confirm(
 5. Promise resolves with the decision
 
 If the user chooses "abort", the entire session is aborted (not just the tool call).
+
+**Always check `ctx.hasUI` first.** In non-interactive modes (print, JSON), `ctx.ui.confirm()` returns `false` immediately without showing any UI — omitting the guard silently blocks every tool call.
 
 ## Environment Variables
 
@@ -127,6 +151,11 @@ const dockerAllowed = process.env.AGENTLOOP_DOCKER_ALLOWED || "ps,logs,images";
 | `AGENTLOOP_ALLOWED_PATHS` | Comma-separated allowed file paths | (empty = no restriction) |
 | `AGENTLOOP_DOCKER_ALLOWED` | Comma-separated allowed docker subcommands | `ps,logs,images,build,compose,inspect,stats` |
 | `AGENTLOOP_DOCKER_BLOCKED_VOLS` | Comma-separated blocked volume paths | `/etc,/var,/root,/proc,/sys,/dev` |
+| `AGENTLOOP_HITL_FORCE_KEYWORDS` | Bash keywords that trigger forced HITL approval | From `hitl.force_hitl_keywords` in config |
+| `AGENTLOOP_INJECTION_PROTECTION` | Enable/disable prompt injection protection | `true` |
+| `AGENTLOOP_WHITELIST_SOURCES` | Comma-separated allowed read paths | From `security.injection.whitelist_sources` |
+| `AGENTLOOP_BLOCKED_KEYWORDS` | Comma-separated injection trigger keywords | From `security.injection.blocked_keywords` |
+| `AGENTLOOP_MAX_CONTENT_LENGTH` | Max content size in bytes | `50000` |
 
 ## Existing Extensions
 
@@ -143,13 +172,24 @@ const dockerAllowed = process.env.AGENTLOOP_DOCKER_ALLOWED || "ps,logs,images";
 
 ### docker-guard.ts
 
-**Type:** Permission gate
+**Type:** Permission gate + HITL
 
 **Intercepts:** `bash` tool calls containing `docker` or `docker-compose`
 
 **Validates:**
-- Subcommand against `AGENTLOOP_DOCKER_ALLOWED` whitelist
-- Volume mounts (`-v`/`--volume`) against `AGENTLOOP_DOCKER_BLOCKED_VOLS`
+- Subcommand against `AGENTLOOP_DOCKER_ALLOWED` whitelist — blocked immediately on violation
+- Volume mounts (`-v`/`--volume`) against `AGENTLOOP_DOCKER_BLOCKED_VOLS` — blocked immediately on violation
+- All commands that pass both checks still require explicit `ctx.ui.confirm()` approval
+
+### force-hitl.ts
+
+**Type:** HITL gate
+
+**Intercepts:** `bash` tool calls
+
+**Behaviour:** Any bash command containing a keyword from `AGENTLOOP_HITL_FORCE_KEYWORDS` pauses for `ctx.ui.confirm()` before executing. Keywords are set in `agentloop.yaml` under `hitl.force_hitl_keywords` and injected by the Go orchestrator.
+
+**Default keywords:** `sudo`, `chmod`, `chown`, `systemctl`, `npm install`, `pip install`, `yarn add`
 
 ## Limitations
 
