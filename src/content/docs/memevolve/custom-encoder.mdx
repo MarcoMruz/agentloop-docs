@@ -59,7 +59,7 @@ import (
     "strings"
     "time"
 
-    "github.com/user/agentloop/internal/memory/evolve"
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve"
 )
 
 // KeywordCountEncoder extracts the top N unique words (>3 chars) from each message.
@@ -144,7 +144,7 @@ import (
     "context"
     "testing"
 
-    "github.com/user/agentloop/internal/memory/evolve"
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve"
 )
 
 func TestEncodeProducesUserUnit(t *testing.T) {
@@ -225,9 +225,9 @@ In your server initialization (e.g. `cmd/agentloop-server/main.go`), replace the
 
 ```go
 import (
-    "github.com/user/agentloop/internal/memory/evolve"
-    "github.com/user/agentloop/internal/memory/evolve/baseline"
-    "github.com/user/agentloop/internal/memory/evolve/myencoder"
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve"
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve/baseline"
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve/myencoder"
 )
 
 // Build the PipelineHolder with your custom encoder.
@@ -237,7 +237,7 @@ holder := evolve.NewPipelineHolder(
     evolve.DefaultPipelineConfig(),
     myencoder.NewKeywordCountEncoder(20),  // ← your custom encoder
     baseline.NewBaselineStorer(profiles, conversations),
-    baseline.NewBaselineRetriever(profiles, conversations, evolve.DefaultPipelineConfig().Retriever),
+    baseline.NewBaselineRetriever(profiles, conversations, &evolve.DefaultPipelineConfig().Retriever),
     baseline.NewBaselineManager(compactor),
 )
 
