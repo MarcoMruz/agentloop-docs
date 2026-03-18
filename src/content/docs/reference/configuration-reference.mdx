@@ -3,6 +3,8 @@ title: Configuration Reference
 description: Complete reference for all AgentLoop configuration fields, types, defaults, and environment overrides.
 ---
 
+import { Aside } from '@astrojs/starlight/components';
+
 ## Server
 
 | YAML Path | Go Type | Default | Description |
@@ -146,3 +148,9 @@ logging:
   level: info
   file: ""
 ```
+
+## Evolution
+
+<Aside type="tip">
+The `evolution:` configuration block and the `pipeline-config.yaml` file reference are documented in full on the [MemEvolve Configuration](/memevolve/configuration) page.
+</Aside>
