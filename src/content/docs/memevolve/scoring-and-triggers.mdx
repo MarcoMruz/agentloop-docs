@@ -19,7 +19,7 @@ type TaskOutcome struct {
     UserID        string        `json:"user_id"`
     Timestamp     time.Time     `json:"timestamp"`
     HITLDenials   int           `json:"hitl_denials"`   // from sess.HITLDenialCount()
-    HITLApprovals int           `json:"hitl_approvals"` // from sess.HITLApprovalCount()
+    HITLApprovals int           `json:"hitl_approvals"` // recorded but not currently populated (always 0)
     SteerCount    int           `json:"steer_count"`    // from sess.SteerCount()
     FinalStatus   string        `json:"final_status"`   // "done", "aborted", "error"
     TokensUsed    int           `json:"tokens_used"`
@@ -178,6 +178,7 @@ if m.collector != nil {
         ToolCalls:    result.Stats.ToolCalls,
         HITLDenials:  sess.HITLDenialCount(),   // atomic counter on Session
         SteerCount:   sess.SteerCount(),         // atomic counter on Session
+        // HITLApprovals not set — always defaults to 0 (field reserved for future use)
         FinalStatus:  string(sess.State),
         TaskKeywords: memory.ExtractKeywords(sess.Task),
         TaskTopics:   memory.ExtractTopics(sess.Task),
