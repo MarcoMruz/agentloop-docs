@@ -38,6 +38,7 @@ evolution:
   meta_token_budget: 10000  # raise for more nuanced proposals; watch LLM costs
   max_outcomes_per_run: 10  # 5 = focused, 20 = broader context per evolution
   snapshot_retain_max: 50   # manual pruning required (auto-pruning not yet implemented)
+  pipeline_config_path: ""  # empty = auto-detect from vault/memory/evolved/
   min_cooldown_seconds: 300 # 5 minutes between runs; raise to reduce LLM spend
   max_daily_runs: 10        # hard daily cap; lower to 3-5 in high-traffic setups
 ```
