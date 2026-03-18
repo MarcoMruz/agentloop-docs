@@ -155,4 +155,3 @@ git diff HEAD~2 HEAD -- memory/evolved/pipeline-config.yaml
 | Snapshot attempted before any write | `Applier.Apply()` | Best-effort — failure is `slog.Warn`, execution continues |
 | One evolution at a time | `MetaAgent.mu` mutex | Hard — concurrent callers block |
 | `position: "edges"` always enforced | `MergeWithDefaults()` | Hard — always overwritten, ignores evolved value |
-```

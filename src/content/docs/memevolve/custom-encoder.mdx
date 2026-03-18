@@ -232,12 +232,13 @@ import (
 
 // Build the PipelineHolder with your custom encoder.
 // All other stages use the baseline implementations.
+defaults := evolve.DefaultPipelineConfig()
 holder := evolve.NewPipelineHolder(
     cfg.Vault.Path,
-    evolve.DefaultPipelineConfig(),
+    defaults,
     myencoder.NewKeywordCountEncoder(20),  // ← your custom encoder
     baseline.NewBaselineStorer(profiles, conversations),
-    baseline.NewBaselineRetriever(profiles, conversations, &evolve.DefaultPipelineConfig().Retriever),
+    baseline.NewBaselineRetriever(profiles, conversations, &defaults.Retriever),
     baseline.NewBaselineManager(compactor),
 )
 
