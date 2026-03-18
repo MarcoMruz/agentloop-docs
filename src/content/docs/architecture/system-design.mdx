@@ -55,6 +55,7 @@ graph TD
         API["Socket API (JSON-RPC 2.0)"]
         SM["Session Manager"]
         Mem["Memory Engine"]
+        ME["MemEvolve"]
         Core["Agent Core"]
         Skills["Skills Registry"]
         HITL["HITL Gate"]
@@ -76,6 +77,9 @@ graph TD
     API --> Mem
     SM --> Core
     Mem --> Core
+    Mem --> ME
+    ME --> Vault
+    ME --> Skills
     Skills --> Core
     HITL --> Core
     Core -->|stdin/stdout JSON RPC| Pi
@@ -126,6 +130,7 @@ Notifications have a `method` field but **no `id`**. Clients cannot respond to t
 | [Session Manager](/architecture/session-lifecycle/) | `internal/session` | Session lifecycle, concurrency limits, routing |
 | [Agent Core](/architecture/agent-core/) | `internal/agent` | Prompt building, pi subprocess management, event loop |
 | [Memory Engine](/architecture/memory-system/) | `internal/memory` | Profiles, conversation logs, compaction, caching |
+| [MemEvolve](/memevolve/overview/) | `internal/memevolve` | Self-evolving memory pipeline — scores sessions, clusters failures, and applies targeted improvements to retrieval config and skills |
 | [Skills Registry](/guides/skills/) | `internal/skills` | On-demand instruction injection |
 | [HITL Gate](/architecture/hitl-flow/) | `internal/hitl` | Human approval flow types and formatting |
 | [Vault](/guides/vault-and-obsidian/) | `internal/vault` | Session persistence, Obsidian-compatible markdown |
