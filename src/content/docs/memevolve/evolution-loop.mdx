@@ -39,7 +39,7 @@ sequenceDiagram
 
 ## `MetaAgent.Evolve()` Step by Step
 
-`Evolve(outcome TaskOutcome)` runs all 9 steps under a mutex:
+`Evolve(outcome TaskOutcome)` runs 10 steps serialized under a mutex:
 
 1. **Acquire lock** — `m.mu.Lock()`. Concurrent triggers block here until the current run finishes.
 2. **Load outcomes** — `metrics.LoadOutcomes(m.vaultPath, outcome.UserID, 30)`. Reads up to 30 days of JSONL for the user.
