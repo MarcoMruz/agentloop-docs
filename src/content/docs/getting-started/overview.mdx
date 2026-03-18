@@ -23,6 +23,7 @@ AgentLoop wraps pi and adds everything needed for production use.
 | | Multi-client support (CLI, Slack, future web UI) |
 | | Prompt caching and context compaction |
 | | Unix socket JSON-RPC server |
+| | MemEvolve (self-evolving memory pipeline) |
 
 ## System Architecture
 
@@ -35,9 +36,12 @@ graph TD
     Server --> API["Socket API"]
     Server --> SM["Session Manager"]
     Server --> Mem["Memory Engine"]
+    Server --> ME["MemEvolve"]
     API --> Core["Agent Core"]
     SM --> Core
     Mem --> Core
+    Mem --> ME
+    ME --> Vault
     Core --> Pi["pi subprocess (per session)"]
     Pi --> Tools["Tools: read, write, edit, bash, grep, find, ls"]
     Pi --> Ext["Extensions: security-policy, docker-guard"]
