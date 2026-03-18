@@ -54,6 +54,26 @@ export default defineConfig({
           ],
         },
         {
+          label: "MemEvolve",
+          badge: { text: "Self-Evolving", variant: "tip" },
+          collapsed: false,
+          items: [
+            { label: "Overview", slug: "memevolve/overview" },
+            { label: "The Memory Pipeline", slug: "memevolve/how-memory-works" },
+            { label: "Scoring & Triggers", slug: "memevolve/scoring-and-triggers" },
+            { label: "Evolution Loop", slug: "memevolve/evolution-loop" },
+            {
+              label: "Versioning & Safety",
+              slug: "memevolve/versioning-and-safety",
+            },
+            { label: "Configuration", slug: "memevolve/configuration" },
+            {
+              label: "Tutorial: Custom Encoder",
+              slug: "memevolve/custom-encoder",
+            },
+          ],
+        },
+        {
           label: "Guides",
           items: [
             { label: "Configuration", slug: "guides/configuration" },

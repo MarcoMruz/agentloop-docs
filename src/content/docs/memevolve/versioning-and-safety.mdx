@@ -1,0 +1,157 @@
+---
+title: Versioning & Safety
+description: Snapshots, the evolution log, rollback procedure, disabling evolution, and the git audit trail — how to inspect and recover from MemEvolve changes.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Overview
+
+Every evolution attempts a snapshot before writing anything (best-effort — a snapshot failure is logged but does not block the evolution). Snapshots live in `vault/memory/evolved/snapshots/`. You can roll back by copying a snapshot's `pipeline-config.yaml` into place and restarting the server. Every change is also committed to git in the vault directory.
+
+## Vault Structure
+
+MemEvolve writes to two locations under the vault root (`~/.local/share/agentloop/vault/` by default):
+
+```
+vault/
+├── memory/
+│   └── evolved/
+│       ├── pipeline-config.yaml          ← active evolved pipeline config
+│       ├── evolution-log.jsonl           ← append-only audit log
+│       └── snapshots/
+│           └── YYYYMMDD-HHMMSS/          ← point-in-time snapshot
+│               ├── pipeline-config.yaml
+│               └── agents-md-section.md  ← only present if markers existed
+└── metrics/
+    └── {userId}-YYYY-MM-DD.jsonl         ← task outcome records
+```
+
+<Aside type="note">
+Task outcome JSONL files are written to `vault/metrics/` (directly under the vault root), not under `vault/memory/evolved/`. This is a separate path from the pipeline config and evolution log.
+</Aside>
+
+## Snapshots
+
+`version.Snapshotter.Take()` creates a timestamped directory before any files are changed:
+
+**What gets snapshotted:**
+1. `pipeline-config.yaml` — copied if it exists in `vault/memory/evolved/`
+2. `agents-md-section.md` — the content between `<!-- EVOLVED:START -->` and `<!-- EVOLVED:END -->` in `AGENTS.md`. **Only written if both markers are present** — early snapshots (before any AGENTS.md evolution) will not contain this file.
+
+**Directory naming:** `YYYYMMDD-HHMMSS` (e.g. `20260318-142301`)
+
+<Aside type="note">
+`snapshot_retain_max` (default `50`) is a configuration field reserved for future automatic pruning. `Snapshotter.Take()` does not currently enforce it — snapshots accumulate until pruned manually.
+</Aside>
+
+**Manual pruning:**
+```bash
+ls -t ~/.local/share/agentloop/vault/memory/evolved/snapshots/ | tail -n +51 | \
+  xargs -I{} rm -rf ~/.local/share/agentloop/vault/memory/evolved/snapshots/{}
+```
+
+## Evolution Log
+
+`Applier.logEvolution()` appends one JSON line per evolution to `vault/memory/evolved/evolution-log.jsonl`. Each line contains three fields:
+
+```json
+{"timestamp": "2026-03-18T14:23:01Z", "summary": "Increase keyword_limit for infrastructure tasks", "reasoning": "HITL denials on docker tasks suggest agent retrieved too few relevant context units. Increasing keyword_limit from 15 to 20 for the infrastructure topic cluster."}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timestamp` | RFC3339 string | When the evolution was applied |
+| `summary` | string | One-line summary (used as git commit message suffix) |
+| `reasoning` | string | Meta-agent's explanation of why these changes were proposed |
+
+**Read the log:**
+```bash
+cat ~/.local/share/agentloop/vault/memory/evolved/evolution-log.jsonl | jq .
+```
+
+**Count evolutions today:**
+```bash
+cat ~/.local/share/agentloop/vault/memory/evolved/evolution-log.jsonl | \
+  jq -r 'select(.timestamp | startswith("2026-03-18")) | .summary'
+```
+
+<Aside type="note">
+`version.LogEntry` (with 5 fields: `Timestamp`, `SessionID`, `Score`, `Summary`, `ConfigVersion`) exists in `internal/memory/evolve/version/log.go` as a richer type, but the current `Applier` writes a 3-field inline struct. The richer `LogEntry` is available for future use.
+</Aside>
+
+## Rolling Back an Evolution
+
+To restore a previous `pipeline-config.yaml`:
+
+**Step 1 — Find the snapshot to restore:**
+```bash
+ls ~/.local/share/agentloop/vault/memory/evolved/snapshots/
+# 20260318-140100  20260318-142301  20260317-093045
+```
+
+**Step 2 — Copy the config back:**
+```bash
+cp ~/.local/share/agentloop/vault/memory/evolved/snapshots/20260318-140100/pipeline-config.yaml \
+   ~/.local/share/agentloop/vault/memory/evolved/pipeline-config.yaml
+```
+
+**Step 3 — Restart the server** (pipeline reloads `pipeline-config.yaml` on startup):
+```bash
+kill $(pgrep agentloop-server) && ./agentloop-server &
+```
+
+**Step 4 (optional) — Restore AGENTS.md evolved section:**
+```bash
+# Get the marker positions and replace the evolved section
+# If agents-md-section.md exists in the snapshot:
+# Manually copy its content into AGENTS.md between the <!-- EVOLVED:START/END --> markers
+```
+
+<Aside type="tip">
+You can also revert via git if the vault directory is a git repo: `cd vault && git log --oneline` to find the pre-evolution commit, then `git checkout <hash> -- memory/evolved/pipeline-config.yaml`.
+</Aside>
+
+## Disabling Evolution
+
+To stop all future evolution runs, set in `agentloop.yaml`:
+
+```yaml
+evolution:
+  enabled: false
+```
+
+**What happens to existing evolved state:** The `pipeline-config.yaml` in `vault/memory/evolved/` continues to be loaded and used. Disabling evolution does not revert the pipeline — it only stops new evolutions from running. To revert to baseline, delete `vault/memory/evolved/pipeline-config.yaml`.
+
+## Git Audit Trail
+
+Every successful `Applier.Apply()` produces a commit in the vault directory. On first evolution, `gitCommit()` lazy-initializes a git repo in the vault root if one doesn't exist.
+
+**Commit format:**
+```
+evolve: <summary from EvolutionProposal.Summary>
+```
+
+**View the evolution history:**
+```bash
+cd ~/.local/share/agentloop/vault
+git log --oneline
+# a3f92b1 evolve: Increase keyword_limit for infrastructure tasks
+# 7d4e1c0 evolve: Add evolved-docker-workflow skill for deploy tasks
+# 2b8a9f3 evolve: Update AGENTS.md with retry pattern for flaky tests
+```
+
+**Diff two evolutions:**
+```bash
+git diff HEAD~2 HEAD -- memory/evolved/pipeline-config.yaml
+```
+
+## Constraints Summary
+
+| Constraint | Enforced by | Strength |
+|---|---|---|
+| AGENTS.md: absent markers → append; present → region replaced | `Applier.ApplyAgentsMD()` | Best-effort at call site (failure is warned, not fatal) |
+| Evolved skills prefixed `evolved-` | `Applier.ApplySkill()` | Hard — returns error for non-compliant names |
+| Snapshot attempted before any write | `Applier.Apply()` | Best-effort — failure is `slog.Warn`, execution continues |
+| One evolution at a time | `MetaAgent.mu` mutex | Hard — concurrent callers block |
+| `position: "edges"` always enforced | `MergeWithDefaults()` | Hard — always overwritten, ignores evolved value |

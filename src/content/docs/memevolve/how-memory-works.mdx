@@ -1,0 +1,201 @@
+---
+title: The Memory Pipeline
+description: How AgentLoop builds the memory block for every prompt — the four interfaces, MemoryUnit exchange type, Pipeline orchestrator, baseline implementations, and hot-swap model.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Overview
+
+Every agent prompt includes a `<memory>` block assembled by a four-stage pipeline: **encode** raw interactions into structured units → **store** them in the vault → **retrieve** relevant ones for the current task → **compact** under the token budget. Each stage is a Go interface, swappable independently. The baseline implementations preserve the original behavior exactly — no behavior change on initial deploy.
+
+## The Four Interfaces
+
+Each interface has one responsibility and communicates exclusively through `MemoryUnit` values:
+
+```go
+// Encode raw interactions into structured MemoryUnit slices.
+type Encoder interface {
+    Encode(ctx context.Context, input EncoderInput) (*EncoderOutput, error)
+}
+
+// Persist and load MemoryUnit slices to/from vault storage.
+type Storer interface {
+    Store(ctx context.Context, units []MemoryUnit) error
+    Load(ctx context.Context, userId string, filter StoreFilter) ([]MemoryUnit, error)
+}
+
+// Select relevant units for a task context.
+type Retriever interface {
+    Retrieve(ctx context.Context, query RetrievalQuery) (*RetrievalResult, error)
+}
+
+// Compact or prune stored memory under a token budget.
+type Manager interface {
+    Compact(ctx context.Context, input CompactionInput) (*CompactionResult, error)
+}
+```
+
+## `MemoryUnit` — The Universal Exchange Type
+
+All four interfaces speak `MemoryUnit`. It carries everything needed for encoding, scoring, and retrieval:
+
+```go
+type MemoryUnit struct {
+    ID        string
+    Timestamp time.Time
+    Role      string            // "user", "assistant", "system"
+    Content   string
+    Keywords  []string          // extracted by Encoder, used by Retriever for scoring
+    Topics    []string          // matched against taxonomy, used for topic bonus
+    Metadata  map[string]string // extensible: contextID, source, toolsUsed, type
+    Score     float64           // set by Retriever during scoring; 0.0 from Encoder
+}
+```
+
+<Aside type="caution">
+The `Score` field must be `0.0` when returned from an `Encoder`. It is set exclusively by the `Retriever` during scoring. Encoders that set `Score` will have their value overwritten.
+</Aside>
+
+### Input and Output Types
+
+```go
+// Input to Encoder: raw interaction data from a completed session turn.
+type EncoderInput struct {
+    UserID                string
+    UserMessage           string
+    AgentReply            string
+    ToolsUsed             []string
+    ConversationContextID string
+}
+
+// Output from Encoder: the encoded units.
+type EncoderOutput struct {
+    Units []MemoryUnit
+}
+
+// Filter for Storer.Load().
+type StoreFilter struct {
+    Type      string // "profile", "conversation", "all"
+    ContextID string // empty = no filter
+    MaxItems  int
+}
+
+// Query for Retriever.Retrieve().
+type RetrievalQuery struct {
+    UserID    string
+    Task      string
+    ContextID string // thread-scoped retrieval
+    MaxTokens int
+}
+
+// Result from Retriever.Retrieve(): assembled text for <memory> block injection.
+type RetrievalResult struct {
+    Context       string // assembled text
+    TokenEstimate int
+    UnitsUsed     int
+}
+
+// Input to Manager.Compact().
+type CompactionInput struct {
+    Text      string
+    MaxTokens int
+    Strategy  string
+}
+
+// Result from Manager.Compact().
+type CompactionResult struct {
+    Text           string
+    TokenEstimate  int
+    EntriesRemoved int
+}
+```
+
+## `Pipeline` and `PipelineHolder`
+
+`Pipeline` wires the four interfaces together. `PipelineHolder` manages the active `Pipeline` and provides atomic hot-swap:
+
+```go
+// NewPipelineHolder creates the holder, loads any evolved config, and builds
+// the initial pipeline by merging defaults with the evolved config file.
+func NewPipelineHolder(
+    vaultPath string,
+    defaults  *PipelineConfig,
+    encoder   Encoder,
+    storer    Storer,
+    retriever Retriever,
+    manager   Manager,
+) *PipelineHolder
+
+// Get returns the current active pipeline (lock-free atomic load).
+func (h *PipelineHolder) Get() *Pipeline
+
+// Reload reads vault/memory/evolved/pipeline-config.yaml and atomically
+// swaps in a new Pipeline with the updated config. Implementations are reused.
+func (h *PipelineHolder) Reload() error
+
+// ConfigVersion returns the version integer from the active config as a string.
+func (h *PipelineHolder) ConfigVersion() string
+```
+
+### Hot-Swap Model
+
+`Reload()` uses `atomic.Pointer[Pipeline]`. In-flight sessions that already called `Get()` hold a reference to the old `Pipeline` and continue uninterrupted. Only new `Get()` calls after the swap see the updated config:
+
+```
+Before Reload():  all sessions ──► Pipeline v2
+After  Reload():  old sessions ──► Pipeline v2 (until they finish)
+                  new sessions ──► Pipeline v3
+```
+
+The implementations (`encoder`, `storer`, `retriever`, `manager`) are copied from the old pipeline — only the `config` pointer changes. This means `Reload()` updates config without restarting any subsystem.
+
+## Baseline Implementations
+
+The four baseline implementations in `internal/memory/evolve/baseline/` wrap the existing memory engine behavior. They are the default implementations on a fresh install — behavior is identical to pre-MemEvolve AgentLoop.
+
+### `BaselineEncoder`
+
+Calls `memory.ExtractKeywords` and `memory.ExtractTopics` (exported from `internal/memory/index.go`). Produces one `MemoryUnit` per role (user message and/or agent reply) with `Role`, `Content`, `Keywords`, `Topics`, and `Metadata.context_id` populated.
+
+### `BaselineStorer`
+
+Delegates to `memory.ProfileStore` for profile-type units and `memory.ConversationStore` for conversation units. Same storage format as the pre-MemEvolve engine.
+
+### `BaselineRetriever`
+
+Jaccard keyword scoring + topic bonus + recency weight. `scoreEntryBaseline()` computes:
+
+```
+score = (matching keywords / task keywords) + (topic_bonus if any topic matches)
+```
+
+If no entries score above 0, falls back to the most recent `fallback_recent` entries. Results are then reordered by `positionEdges()`.
+
+### `BaselineManager`
+
+Delegates to `memory.Compactor` with the strategy from `ManagerConfig`. Supports `rolling`, `facts`, and `topics` strategies — all heuristic-based, no LLM calls.
+
+## `position: "edges"` — Lost-in-the-Middle Guard
+
+LLMs recall information at the start and end of a context block more reliably than the middle. `positionEdges()` interleaves scored results so the highest-scoring units land at the edges of the `<memory>` block:
+
+```
+Input (sorted by score desc): [A=0.9, B=0.7, C=0.5, D=0.3, E=0.1]
+Output (edges first):         [A, C, E, D, B]
+                               ^top           ^bottom  ^middle
+```
+
+<Aside type="note">
+`position: "edges"` is a **hard constraint** enforced in `MergeWithDefaults()` — it is always overwritten to `"edges"` regardless of what an evolved config proposes. Evolution cannot change retrieval positioning.
+</Aside>
+
+## How `Engine` Delegates to the Pipeline
+
+`memory.Engine` gains a `SetPipeline()` method that wires in the `PipelineHolder`:
+
+```go
+func (e *Engine) SetPipeline(p *evolve.PipelineHolder) { e.pipeline = p }
+```
+
+When a pipeline is set, `GetContextForUser()` calls `pipeline.Get().Retrieve()` instead of the legacy profile+conversation path. If retrieval returns an error, the engine falls back to legacy behavior silently — backward compatible.

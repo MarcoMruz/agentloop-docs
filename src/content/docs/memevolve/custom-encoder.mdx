@@ -1,0 +1,280 @@
+---
+title: "Tutorial: Custom Encoder"
+description: Step-by-step guide to implementing a custom Encoder for the MemEvolve pipeline — interface, implementation, tests, and wiring into PipelineHolder.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## When to Write a Custom Encoder
+
+The `BaselineEncoder` handles most workloads. Write a custom encoder when you need:
+
+- **Domain-specific keyword extraction** — your tasks use terminology not covered by the default heuristics (medical, legal, financial, code-specific).
+- **Embedding-based semantic encoding** — you want semantic similarity rather than keyword overlap.
+- **Multi-language support** — the baseline uses English word boundaries and stopword lists.
+- **Tool-usage tagging** — explicitly encoding which tools were used as keywords for retrieval.
+
+## The Interface
+
+```go
+// From internal/memory/evolve/interfaces.go
+type Encoder interface {
+    Encode(ctx context.Context, input EncoderInput) (*EncoderOutput, error)
+}
+
+type EncoderInput struct {
+    UserID                string
+    UserMessage           string
+    AgentReply            string
+    ToolsUsed             []string
+    ConversationContextID string
+}
+
+type EncoderOutput struct {
+    Units []MemoryUnit
+}
+
+type MemoryUnit struct {
+    ID        string
+    Timestamp time.Time
+    Role      string            // must be "user", "assistant", or "system"
+    Content   string
+    Keywords  []string          // used by Retriever for Jaccard scoring
+    Topics    []string          // used for topic bonus
+    Metadata  map[string]string
+    Score     float64           // leave at 0.0 — set by Retriever
+}
+```
+
+## Step 1: Implement the Interface
+
+Create `internal/memory/evolve/myencoder/encoder.go`:
+
+```go
+package myencoder
+
+import (
+    "context"
+    "fmt"
+    "strings"
+    "time"
+
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve"
+)
+
+// KeywordCountEncoder extracts the top N unique words (>3 chars) from each message.
+// Replace this logic with your domain-specific extraction.
+type KeywordCountEncoder struct {
+    maxKeywords int
+}
+
+func NewKeywordCountEncoder(max int) *KeywordCountEncoder {
+    return &KeywordCountEncoder{maxKeywords: max}
+}
+
+func (e *KeywordCountEncoder) Encode(
+    ctx context.Context,
+    input evolve.EncoderInput,
+) (*evolve.EncoderOutput, error) {
+    var units []evolve.MemoryUnit
+
+    if input.UserMessage != "" {
+        units = append(units, evolve.MemoryUnit{
+            ID:        fmt.Sprintf("%s-user-%d", input.UserID, time.Now().UnixNano()),
+            Timestamp: time.Now(),
+            Role:      "user",
+            Content:   input.UserMessage,
+            Keywords:  extractTop(tokenize(input.UserMessage), e.maxKeywords),
+            Metadata: map[string]string{
+                "context_id": input.ConversationContextID,
+            },
+        })
+    }
+
+    if input.AgentReply != "" {
+        units = append(units, evolve.MemoryUnit{
+            ID:        fmt.Sprintf("%s-assistant-%d", input.UserID, time.Now().UnixNano()),
+            Timestamp: time.Now(),
+            Role:      "assistant",
+            Content:   input.AgentReply,
+            Keywords:  extractTop(tokenize(input.AgentReply), e.maxKeywords),
+            Metadata: map[string]string{
+                "context_id": input.ConversationContextID,
+            },
+        })
+    }
+
+    // Score must be 0.0 — the Retriever sets it during scoring.
+    return &evolve.EncoderOutput{Units: units}, nil
+}
+
+// tokenize splits text into unique lowercase words longer than 3 characters,
+// stripping common punctuation. Replace with your NLP pipeline.
+func tokenize(text string) []string {
+    words := strings.Fields(strings.ToLower(text))
+    seen := make(map[string]bool)
+    var unique []string
+    for _, w := range words {
+        w = strings.Trim(w, `.,!?;:"'()[]{}`)
+        if len(w) > 3 && !seen[w] {
+            seen[w] = true
+            unique = append(unique, w)
+        }
+    }
+    return unique
+}
+
+// extractTop returns the first max items, or the full slice if shorter.
+func extractTop(words []string, max int) []string {
+    if max <= 0 || len(words) <= max {
+        return words
+    }
+    return words[:max]
+}
+```
+
+## Step 2: Write Tests
+
+Create `internal/memory/evolve/myencoder/encoder_test.go`:
+
+```go
+package myencoder
+
+import (
+    "context"
+    "testing"
+
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve"
+)
+
+func TestEncodeProducesUserUnit(t *testing.T) {
+    enc := NewKeywordCountEncoder(5)
+    out, err := enc.Encode(context.Background(), evolve.EncoderInput{
+        UserID:      "alice",
+        UserMessage: "please fix the docker build pipeline failure",
+    })
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if len(out.Units) != 1 {
+        t.Fatalf("expected 1 unit, got %d", len(out.Units))
+    }
+    u := out.Units[0]
+    if u.Role != "user" {
+        t.Errorf("expected role 'user', got %q", u.Role)
+    }
+    if len(u.Keywords) == 0 {
+        t.Error("expected non-empty keywords")
+    }
+    if u.Score != 0.0 {
+        t.Errorf("encoder must not set Score; got %v", u.Score)
+    }
+}
+
+func TestEncodeProducesBothRoles(t *testing.T) {
+    enc := NewKeywordCountEncoder(10)
+    out, err := enc.Encode(context.Background(), evolve.EncoderInput{
+        UserID:      "alice",
+        UserMessage: "how do I reset the database",
+        AgentReply:  "run the migration rollback command",
+    })
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if len(out.Units) != 2 {
+        t.Fatalf("expected 2 units (user + assistant), got %d", len(out.Units))
+    }
+    roles := map[string]bool{}
+    for _, u := range out.Units {
+        roles[u.Role] = true
+    }
+    if !roles["user"] || !roles["assistant"] {
+        t.Errorf("expected both user and assistant roles, got %v", roles)
+    }
+}
+
+func TestEncodeEmptyInput(t *testing.T) {
+    enc := NewKeywordCountEncoder(5)
+    out, err := enc.Encode(context.Background(), evolve.EncoderInput{UserID: "alice"})
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if len(out.Units) != 0 {
+        t.Errorf("expected 0 units for empty input, got %d", len(out.Units))
+    }
+}
+
+func TestEncodeKeywordLimit(t *testing.T) {
+    enc := NewKeywordCountEncoder(3)
+    out, err := enc.Encode(context.Background(), evolve.EncoderInput{
+        UserID:      "alice",
+        UserMessage: "word1 word2 word3 word4 word5 word6 word7 word8",
+    })
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if len(out.Units[0].Keywords) > 3 {
+        t.Errorf("expected ≤3 keywords, got %d", len(out.Units[0].Keywords))
+    }
+}
+```
+
+## Step 3: Wire into `PipelineHolder`
+
+In your server initialization (e.g. `cmd/agentloop-server/main.go`), replace the baseline encoder with your custom one:
+
+```go
+import (
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve"
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve/baseline"
+    "github.com/MarcoMruz/agentloop/internal/memory/evolve/myencoder"
+)
+
+// Build the PipelineHolder with your custom encoder.
+// All other stages use the baseline implementations.
+defaults := evolve.DefaultPipelineConfig()
+holder := evolve.NewPipelineHolder(
+    cfg.Vault.Path,
+    defaults,
+    myencoder.NewKeywordCountEncoder(20),  // ← your custom encoder
+    baseline.NewBaselineStorer(profiles, conversations),
+    baseline.NewBaselineRetriever(profiles, conversations, &defaults.Retriever),
+    baseline.NewBaselineManager(compactor),
+)
+
+// Wire into the memory engine.
+memEngine.SetPipeline(holder)
+```
+
+<Aside type="note">
+`NewPipelineHolder` loads any existing `vault/memory/evolved/pipeline-config.yaml` and merges it with the defaults. Your custom encoder receives the merged config on construction — if you need config parameters in your encoder, add them to `EncoderConfig` and read from `PipelineConfig.Encoder` in your constructor.
+</Aside>
+
+## Step 4: Verify the Pipeline Wiring
+
+```bash
+cd /path/to/agentloop
+go build ./cmd/agentloop-server/...
+```
+
+Expected: builds without errors.
+
+Start the server and run a task. Check that `vault/metrics/{userId}-YYYY-MM-DD.jsonl` receives an entry after the task completes.
+
+## Common Pitfalls
+
+<Aside type="caution">
+**Empty `Keywords` slice** — If your encoder returns units with `Keywords: nil` or `Keywords: []`, the `BaselineRetriever` will score all units at 0.0 and fall back to `fallback_recent` recency ordering. This silently disables keyword-based retrieval.
+</Aside>
+
+<Aside type="caution">
+**Setting `Score` in the Encoder** — The `Score` field must be `0.0` when returned from `Encode()`. The `Retriever` overwrites it during scoring. Encoders that set `Score` will have their value discarded.
+</Aside>
+
+<Aside type="caution">
+**Invalid `Role` values** — `Role` must be `"user"`, `"assistant"`, or `"system"`. Units with other role values may be filtered during retrieval or compaction.
+</Aside>
+
+<Aside type="note">
+`Topics` is optional. If your encoder does not populate `Topics`, topic bonus scoring (`topic_bonus: 0.2`) will not apply. Keyword-only scoring still works correctly.
+</Aside>

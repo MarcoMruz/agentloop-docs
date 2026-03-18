@@ -1,0 +1,163 @@
+---
+title: Configuration Reference
+description: Complete reference for EvolutionConfig (agentloop.yaml) and PipelineConfig (pipeline-config.yaml) — all fields, types, defaults, and operator tuning guidance.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Overview
+
+MemEvolve is configured in two places:
+
+| File | Controls | Managed by |
+|------|----------|-----------|
+| `agentloop.yaml` (section `evolution:`) | Whether evolution runs, how often, resource limits | Operator |
+| `vault/memory/evolved/pipeline-config.yaml` | Memory pipeline strategy and parameters | MemEvolve (auto-updated) |
+
+## `evolution:` in `agentloop.yaml`
+
+All fields are nested under the `evolution:` key. Type `EvolutionConfig` in `internal/config/config.go`.
+
+| Field | YAML key | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `Enabled` | `enabled` | `bool` | `true` | Master switch. Set to `false` to disable all evolution runs. |
+| `ScoreThreshold` | `score_threshold` | `float64` | `0.7` | Outcomes with `score >= threshold` are discarded. Only scores below this trigger evolution. |
+| `MetaTokenBudget` | `meta_token_budget` | `int` | `10000` | Hard token cap for the meta-agent pi session. |
+| `MaxOutcomesPerRun` | `max_outcomes_per_run` | `int` | `10` | Maximum outcomes loaded into the evolution cluster per run. |
+| `SnapshotRetainMax` | `snapshot_retain_max` | `int` | `50` | Maximum snapshots to retain (reserved — not yet enforced by `Snapshotter`). |
+| `PipelineConfigPath` | `pipeline_config_path` | `string` | `""` | Override path for `pipeline-config.yaml`. Empty = auto-detect at `vault/memory/evolved/`. |
+| `MinCooldownSeconds` | `min_cooldown_seconds` | `int` | `300` | Minimum seconds between evolution triggers. In-memory, resets on restart. |
+| `MaxDailyRuns` | `max_daily_runs` | `int` | `10` | Maximum evolution runs per calendar day. In-memory, resets daily. |
+
+**Sample `agentloop.yaml` evolution block:**
+
+```yaml
+evolution:
+  enabled: true
+  score_threshold: 0.7      # lower = trigger less often (e.g. 0.5 = only very bad sessions)
+  meta_token_budget: 10000  # raise for more nuanced proposals; watch LLM costs
+  max_outcomes_per_run: 10  # 5 = focused, 20 = broader context per evolution
+  snapshot_retain_max: 50   # manual pruning required (auto-pruning not yet implemented)
+  pipeline_config_path: ""  # empty = auto-detect from vault/memory/evolved/
+  min_cooldown_seconds: 300 # 5 minutes between runs; raise to reduce LLM spend
+  max_daily_runs: 10        # hard daily cap; lower to 3-5 in high-traffic setups
+```
+
+### Tuning Guide
+
+**Reduce LLM cost:**
+- Raise `min_cooldown_seconds` to `900` (15 min) or higher.
+- Lower `max_daily_runs` to `3`–`5`.
+- Lower `score_threshold` to `0.5` so only very poor sessions trigger.
+
+**Get faster learning:**
+- Keep `score_threshold` at `0.7` (default).
+- Lower `min_cooldown_seconds` to `60`.
+- Raise `max_outcomes_per_run` to `20` for more context per evolution.
+
+**Safe first deployment:**
+```yaml
+evolution:
+  enabled: false   # observe scores in vault/metrics/ for a few days first
+```
+Once you understand the score distribution for your workload, enable and tune from there.
+
+<Aside type="caution">
+`min_cooldown_seconds: 0` and `max_daily_runs: 100` will trigger an evolution on every poor session. In high-traffic environments this can generate significant LLM spend.
+</Aside>
+
+## `pipeline-config.yaml`
+
+Located at `vault/memory/evolved/pipeline-config.yaml`. Auto-created and updated by MemEvolve. You can edit it manually — changes take effect on the next server restart (or when `Reload()` is called).
+
+### Top-level fields
+
+| Field | YAML key | Type | Description |
+|-------|----------|------|-------------|
+| `Version` | `version` | `int` | Monotonically increasing config version. `1` = baseline. |
+| `Updated` | `updated` | `string` | RFC3339 timestamp of last evolution. |
+| `EvolvedFrom` | `evolved_from` | `string` | Session ID that triggered this evolution. |
+
+### `encoder:` block
+
+| Field | YAML key | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `Strategy` | `strategy` | `string` | `"baseline"` | Encoder implementation. `"baseline"` = use `BaselineEncoder`. |
+| `KeywordLimit` | `keyword_limit` | `int` | `15` | Max keywords extracted per memory unit. |
+| `TopicTaxonomyExtensions` | `topic_taxonomy_extensions` | `[]string` | `[]` | Additional topic terms beyond the built-in taxonomy. |
+| `ExtractToolPatterns` | `extract_tool_patterns` | `bool` | `false` | Extract tool usage patterns into keywords. |
+
+### `retriever:` block
+
+| Field | YAML key | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `Strategy` | `strategy` | `string` | `"jaccard"` | Retrieval algorithm. `"jaccard"` = keyword overlap scoring. |
+| `MaxResults` | `max_results` | `int` | `8` | Maximum units returned per retrieval. |
+| `FallbackRecent` | `fallback_recent` | `int` | `5` | Units to return when no keyword matches. |
+| `TopicBonus` | `topic_bonus` | `float64` | `0.2` | Score bonus added per matching topic. |
+| `RecencyWeight` | `recency_weight` | `float64` | `0.0` | Weight for recency in scoring. `0.0` = recency scoring disabled (baseline). |
+| `Position` | `position` | `string` | `"edges"` | **Always forced to `"edges"` by `MergeWithDefaults()`. Cannot be changed by evolution.** |
+
+### `manager:` block
+
+| Field | YAML key | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `Strategy` | `strategy` | `string` | `"rolling"` | Compaction strategy: `"rolling"`, `"facts"`, or `"topics"`. |
+| `RollingKeepRecent` | `rolling_keep_recent` | `int` | `5` | Entries to keep in rolling compaction. |
+| `FactsMax` | `facts_max` | `int` | `30` | Maximum fact entries in facts compaction. |
+| `FactsKeywords` | `facts_keywords` | `[]string` | `[decided, confirmed, created, fixed, ...]` | Keywords that mark a line as a fact to retain. |
+| `AggressiveFilter` | `aggressive_filter` | `bool` | `false` | Remove entries not matching facts keywords. |
+
+### `storer:` block
+
+| Field | YAML key | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `Format` | `format` | `string` | `"markdown"` | Storage format. `"markdown"` = existing vault format. |
+| `IndexSidecar` | `index_sidecar` | `bool` | `true` | Write `.index.yaml` sidecar alongside conversation files. |
+| `ContextIsolation` | `context_isolation` | `bool` | `true` | Scope storage and retrieval to conversation context ID. |
+
+### Complete Default `pipeline-config.yaml`
+
+```yaml
+version: 1
+updated: ""
+evolved_from: ""
+
+encoder:
+  strategy: baseline
+  keyword_limit: 15
+  topic_taxonomy_extensions: []
+  extract_tool_patterns: false
+
+retriever:
+  strategy: jaccard
+  max_results: 8
+  fallback_recent: 5
+  topic_bonus: 0.2
+  recency_weight: 0.0   # 0.0 = recency scoring disabled
+  position: edges       # hard constraint — always overwritten by MergeWithDefaults()
+
+manager:
+  strategy: rolling
+  rolling_keep_recent: 5
+  facts_max: 30
+  facts_keywords:
+    - decided
+    - confirmed
+    - created
+    - fixed
+    - deployed
+    - merged
+    - installed
+    - configured
+    - updated
+    - deleted
+    - error
+    - failed
+  aggressive_filter: false
+
+storer:
+  format: markdown
+  index_sidecar: true
+  context_isolation: true
+```
