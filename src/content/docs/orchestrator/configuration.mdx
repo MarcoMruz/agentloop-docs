@@ -1,0 +1,129 @@
+---
+title: Configuration Reference
+description: Complete reference for the orchestrator configuration block in agentloop.yaml — agent models, worker pool sizing, iteration limits, and tuning guidance.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Overview
+
+The Orchestrator is configured in the `orchestrator:` section of `agentloop.yaml`. Each agent role (Planner, Worker, Judge) has its own pi configuration, and the Orchestrator itself has pool size, iteration, and summary limits.
+
+## `orchestrator:` in `agentloop.yaml`
+
+All fields are nested under the `orchestrator:` key. Type `OrchestratorConfig` in `internal/config/config.go`.
+
+| Field | YAML Key | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `Planner` | `planner` | `PiConfig` | See below | Pi configuration for the Planner agent |
+| `Worker` | `worker` | `PiConfig` | See below | Pi configuration for Worker agents |
+| `Judge` | `judge` | `PiConfig` | See below | Pi configuration for the Judge agent |
+| `WorkerPoolSize` | `worker_pool_size` | `int` | `4` | Maximum concurrent worker goroutines |
+| `MaxIterations` | `max_iterations` | `int` | `3` | Maximum Planner → Worker → Judge iterations |
+| `SummaryMaxTokens` | `summary_max_tokens` | `int` | `1500` | Maximum tokens per worker summary before truncation |
+
+### PiConfig per Role
+
+Each role has a `PiConfig` with provider and model settings:
+
+| Field | YAML Key | Type | Default (Planner) | Default (Worker) | Default (Judge) |
+|-------|----------|------|-------------------|-------------------|-----------------|
+| `Binary` | `binary` | `string` | `pi` | `pi` | `pi` |
+| `Provider` | `provider` | `string` | `anthropic` | `anthropic` | `anthropic` |
+| `Model` | `model` | `string` | `claude-opus-4-6` | `claude-sonnet-4-6` | `claude-opus-4-6` |
+
+<Aside type="note">
+The Planner and Judge use `claude-opus-4-6` (strong reasoning) while Workers use `claude-sonnet-4-6` (cost-effective execution). This split optimizes for both quality and cost. You can override any role's model in the config.
+</Aside>
+
+## Sample Configuration
+
+```yaml
+orchestrator:
+  planner:
+    binary: pi
+    provider: anthropic
+    model: claude-opus-4-6
+  worker:
+    binary: pi
+    provider: anthropic
+    model: claude-sonnet-4-6
+  judge:
+    binary: pi
+    provider: anthropic
+    model: claude-opus-4-6
+  worker_pool_size: 4        # max concurrent workers
+  max_iterations: 3          # max replan attempts
+  summary_max_tokens: 1500   # truncate worker output for judge
+```
+
+## Tuning Guide
+
+### High-Throughput Environments
+
+For teams running many concurrent tasks:
+
+```yaml
+orchestrator:
+  worker_pool_size: 8          # more parallel workers
+  max_iterations: 2            # fewer iterations to reduce latency
+  summary_max_tokens: 1000     # tighter summaries to save tokens
+  worker:
+    model: claude-sonnet-4-6   # keep workers cost-effective
+```
+
+### Quality-Critical Workloads
+
+When correctness matters more than speed:
+
+```yaml
+orchestrator:
+  worker_pool_size: 2          # fewer workers, more focused
+  max_iterations: 5            # more iterations for refinement
+  summary_max_tokens: 2500     # more context for judge evaluation
+  worker:
+    model: claude-opus-4-6     # stronger model for workers too
+```
+
+### Cost-Conscious Setup
+
+Minimize LLM spend:
+
+```yaml
+orchestrator:
+  planner:
+    model: claude-sonnet-4-6   # cheaper planner
+  judge:
+    model: claude-sonnet-4-6   # cheaper judge
+  worker_pool_size: 2
+  max_iterations: 1            # no replanning
+  summary_max_tokens: 800      # aggressive summary capping
+```
+
+<Aside type="caution">
+Setting `max_iterations: 1` disables replanning entirely. The Judge still runs, but a failing verdict is returned as the final result without any retry. This saves tokens but may reduce quality for complex tasks.
+</Aside>
+
+## Environment Variable Overrides
+
+Format: `AGENTLOOP_ORCHESTRATOR_FIELD` (uppercase, underscores).
+
+```bash
+AGENTLOOP_ORCHESTRATOR_WORKER_POOL_SIZE=8
+AGENTLOOP_ORCHESTRATOR_MAX_ITERATIONS=5
+AGENTLOOP_ORCHESTRATOR_SUMMARY_MAX_TOKENS=2000
+```
+
+<Aside type="note">
+Nested PiConfig fields (e.g., `orchestrator.planner.model`) cannot currently be set via environment variables. Use the YAML config file for role-specific model overrides.
+</Aside>
+
+## Integration with MemEvolve
+
+The Orchestrator's metrics feed into [MemEvolve](/memevolve/overview/) via the `metrics.Collector`. Evolution can improve:
+
+- **Planner instructions** — better mode assessment, step decomposition, dependency detection
+- **Worker instructions** — improved tool usage, output structure, error handling
+- **Judge instructions** — more specific gap identification, better evidence citation
+
+Configure evolution behavior in the [`evolution:` block](/memevolve/configuration/). The Orchestrator does not have its own evolution config — it uses the same MemEvolve system as the rest of AgentLoop.

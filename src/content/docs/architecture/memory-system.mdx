@@ -160,3 +160,9 @@ No LLM calls are made during profile updates — all learning is pattern-based.
 
 AgentLoop includes MemEvolve, a pipeline that observes task outcomes and improves memory retrieval automatically over time. See [The Memory Pipeline](/memevolve/how-memory-works) for the full pipeline architecture and interface reference.
 </Aside>
+
+<Aside type="tip">
+**Orchestrator Integration**
+
+The [Orchestrator](/orchestrator/overview/) uses the Memory Engine to provide user context to all three agent roles (Planner, Worker, Judge). Orchestration outcomes also feed back into MemEvolve for continuous improvement. See [Orchestrator Configuration](/orchestrator/configuration/) for details.
+</Aside>

@@ -74,6 +74,23 @@ export default defineConfig({
           ],
         },
         {
+          label: "Orchestrator",
+          badge: { text: "Multi-Agent", variant: "caution" },
+          collapsed: false,
+          items: [
+            { label: "Overview", slug: "orchestrator/overview" },
+            { label: "Planner", slug: "orchestrator/planner" },
+            { label: "Worker Pool", slug: "orchestrator/worker-pool" },
+            { label: "Judge", slug: "orchestrator/judge" },
+            { label: "Agent Loader", slug: "orchestrator/agent-loader" },
+            { label: "Configuration", slug: "orchestrator/configuration" },
+            {
+              label: "Tutorial: Custom Agent Instructions",
+              slug: "orchestrator/custom-agents",
+            },
+          ],
+        },
+        {
           label: "Guides",
           items: [
             { label: "Configuration", slug: "guides/configuration" },

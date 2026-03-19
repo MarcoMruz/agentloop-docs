@@ -24,6 +24,7 @@ AgentLoop wraps pi and adds everything needed for production use.
 | | Prompt caching and context compaction |
 | | Unix socket JSON-RPC server |
 | | MemEvolve (self-evolving memory pipeline) |
+| | Orchestrator (Planner-Worker-Judge multi-agent coordination) |
 
 ## System Architecture
 
@@ -37,10 +38,13 @@ graph TD
     Server --> SM["Session Manager"]
     Server --> Mem["Memory Engine"]
     Server --> ME["MemEvolve"]
+    Server --> Orch["Orchestrator"]
     API --> Core["Agent Core"]
-    SM --> Core
+    SM --> Orch
+    Orch --> Core
     Mem --> Core
     Mem --> ME
+    Orch --> ME
     ME --> Vault
     Core --> Pi["pi subprocess (per session)"]
     Pi --> Tools["Tools: read, write, edit, bash, grep, find, ls"]

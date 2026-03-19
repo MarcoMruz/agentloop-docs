@@ -5,6 +5,12 @@ description: How AgentLoop builds prompts, manages pi subprocesses, and handles 
 
 import { Aside } from '@astrojs/starlight/components';
 
+<Aside type="tip">
+**Multi-Agent Orchestration**
+
+For complex tasks, the [Orchestrator](/orchestrator/overview/) wraps Agent Core with a Planner-Worker-Judge loop. The Planner assesses whether a task needs multi-agent coordination. Simple tasks go directly to `Core.Run()` as described here. Complex tasks are decomposed into steps, executed by concurrent workers (each using `Core.Run()`), and evaluated by a Judge. See the [Orchestrator Overview](/orchestrator/overview/) for the full flow.
+</Aside>
+
 ## Task Flow
 
 ```mermaid

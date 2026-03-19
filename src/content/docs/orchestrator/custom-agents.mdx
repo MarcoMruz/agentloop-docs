@@ -1,0 +1,229 @@
+---
+title: "Tutorial: Custom Agent Instructions"
+description: Step-by-step guide to writing custom Planner, Worker, and Judge instructions — file format, placement, and examples for domain-specific orchestration behavior.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## When to Write Custom Instructions
+
+The default agent instructions handle general-purpose tasks well. Write custom instructions when:
+
+- **Domain-specific planning** — your tasks follow patterns the default planner doesn't know (e.g., always test before deploy, always run migrations before API changes)
+- **Code quality standards** — workers should follow specific coding conventions, linting rules, or architectural patterns
+- **Custom evaluation criteria** — the judge should enforce standards beyond "does it work?" (e.g., performance benchmarks, accessibility requirements, security review)
+- **Team workflows** — your team has specific approval processes, naming conventions, or documentation requirements
+
+## The File Format
+
+All instruction files use Markdown with YAML frontmatter. See [Agent Loader](/orchestrator/agent-loader/) for the full resolution chain.
+
+```markdown
+---
+name: planner-my-rules
+role: planner
+description: Domain-specific planning rules for our microservices architecture
+---
+
+## Your instructions here
+
+Write natural language instructions that guide the agent's behavior.
+Use Markdown headings, lists, and code blocks for structure.
+```
+
+### Frontmatter Requirements
+
+| Field | Required | Valid Values |
+|-------|----------|-------------|
+| `name` | Yes | Any unique string (e.g. `planner-my-rules`, `worker-code-standards`) |
+| `role` | Yes | `planner`, `worker`, or `judge` |
+| `description` | Yes | One-line purpose description |
+
+## Step 1: Create the Project Directory
+
+Instructions live in an `agents/` directory at your project root:
+
+```bash
+mkdir -p ~/my-project/agents
+```
+
+The [Agent Loader](/orchestrator/agent-loader/) discovers files matching `{workDir}/agents/{role}-*.md`. File names must start with the role prefix.
+
+## Step 2: Write Planner Instructions
+
+Create `~/my-project/agents/planner-guidelines.md`:
+
+```markdown
+---
+name: planner-guidelines
+role: planner
+description: Planning guidelines for our microservices project
+---
+
+## Mode Assessment
+
+Choose "orchestrate" when the task involves:
+- Changes to more than one microservice
+- Database migration + API change combinations
+- Any task that requires running tests after code changes
+
+Choose "single" when:
+- The task affects only one file
+- It's a question or explanation request
+- It's a configuration-only change
+
+## Step Design Rules
+
+- Always include a "run tests" step as the final step
+- Database migrations must be a separate step that runs before API changes
+- Each microservice change should be its own step (enables parallel execution)
+- Include a "verify deployment" step for any task mentioning prod/staging
+
+## Dependency Rules
+
+- Test steps depend on all code change steps
+- API change steps depend on migration steps
+- Deployment steps depend on test steps
+```
+
+## Step 3: Write Worker Instructions
+
+Create `~/my-project/agents/worker-code-standards.md`:
+
+```markdown
+---
+name: worker-code-standards
+role: worker
+description: Code standards and tool usage patterns for our Go codebase
+---
+
+## Code Standards
+
+- All Go code must pass `golangci-lint run` before being considered done
+- Use table-driven tests for any function with more than 2 test cases
+- Error messages must include context: `fmt.Errorf("creating user %s: %w", name, err)`
+- No global state — pass dependencies via constructors
+
+## Output Structure
+
+When completing a step:
+1. State what you changed (files modified/created)
+2. Show the key code changes (not full files)
+3. Report any test results
+4. Note any issues or concerns at the TOP of your response
+
+## Tool Usage
+
+- Use `read` before `edit` — always understand the file first
+- Prefer `edit` over `write` for existing files
+- Run `go build ./...` after code changes to catch compile errors early
+- Run `go test ./...` for the relevant package after changes
+```
+
+## Step 4: Write Judge Instructions
+
+Create `~/my-project/agents/judge-quality-bar.md`:
+
+```markdown
+---
+name: judge-quality-bar
+role: judge
+description: Quality evaluation criteria for our engineering standards
+---
+
+## Evaluation Methodology
+
+For each success criterion:
+1. Find specific evidence in worker summaries that addresses the criterion
+2. Check that evidence is concrete (file paths, test output, error messages)
+3. If evidence is missing or vague, mark the criterion as a gap
+
+## Quality Requirements
+
+Beyond the plan's success criteria, always check:
+- Were tests run and passing? (look for test output in summaries)
+- Were linting/build checks mentioned?
+- Did any worker report HITL denials? (may indicate unsafe operations)
+
+## Gap Identification
+
+When writing gaps:
+- Reference specific criterion IDs
+- Quote evidence from worker summaries
+- Provide actionable suggested fixes (not vague "fix the issue")
+- Rate gap specificity honestly — vague gaps waste replan iterations
+
+## Pass Threshold
+
+- All explicit success criteria must be met with evidence
+- Build/test must pass (unless the task explicitly doesn't involve code)
+- No unresolved HITL denials blocking critical operations
+```
+
+## Step 5: Verify Discovery
+
+Start the server with logging to verify instruction loading:
+
+```bash
+AGENTLOOP_LOGGING_LEVEL=debug ./agentloop-server &
+```
+
+Look for log lines showing instruction discovery:
+
+```
+level=DEBUG msg="loaded agent instruction" name=planner-guidelines role=planner source=project
+level=DEBUG msg="loaded agent instruction" name=worker-code-standards role=worker source=project
+level=DEBUG msg="loaded agent instruction" name=judge-quality-bar role=judge source=project
+```
+
+## Multiple Instruction Files
+
+You can have multiple instruction files per role. They are loaded alphabetically and concatenated:
+
+```
+agents/
+├── planner-01-general.md      ← loaded first
+├── planner-02-domain.md       ← loaded second
+├── worker-code-standards.md
+├── worker-tool-usage.md
+└── judge-quality-bar.md
+```
+
+<Aside type="tip">
+Use numeric prefixes (`01-`, `02-`) to control load order when instruction priority matters. Earlier instructions appear first in the prompt and may receive more attention from the model.
+</Aside>
+
+## Interaction with MemEvolve
+
+Your project instructions coexist with [evolved instructions](/orchestrator/agent-loader/#resolution-chain):
+
+```
+Final prompt = Project instructions + Evolved instructions
+```
+
+- **Project files** are yours to manage — MemEvolve never touches them
+- **Evolved files** (`{role}-evolved.md`) are managed by MemEvolve — don't edit them manually
+- Both are loaded and concatenated in the prompt
+
+If you find that evolved instructions conflict with your project rules, you can:
+1. Disable evolution for the role by clearing the evolved file
+2. Add explicit overrides in your project instructions (project files appear first in the prompt)
+3. Adjust the [evolution constraints](/memevolve/evolution-loop/#the-five-constraints) to respect your standards
+
+## Common Pitfalls
+
+<Aside type="caution">
+**Missing `role` in frontmatter** — The Agent Loader uses the `role` field to match files. A file at `agents/planner-guidelines.md` with `role: worker` in its frontmatter will be loaded as a worker instruction, not a planner instruction.
+</Aside>
+
+<Aside type="caution">
+**Overly long instructions** — Very long instruction files consume tokens from the agent's context window. Keep instructions focused and concise. If you need extensive domain knowledge, consider using [skills](/guides/skills/) instead — they are loaded on-demand per task, not injected into every prompt.
+</Aside>
+
+<Aside type="caution">
+**Conflicting instructions across files** — When using multiple instruction files per role, ensure they don't contradict each other. The model sees all files concatenated and may follow whichever instruction appears last or seems most relevant.
+</Aside>
+
+<Aside type="note">
+Instructions are static per session — they are loaded once when the Orchestrator starts a run. Changes to instruction files take effect on the next orchestration run, not mid-session.
+</Aside>
