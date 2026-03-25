@@ -27,7 +27,7 @@ sequenceDiagram
     SM->>SM: Enforce limits
     SM->>AC: Run(ctx, memoryCtx, task, session)
     AC->>PB: Build prompt
-    PB-->>AC: <memory> + <skills> + task
+    PB-->>AC: <memory> + task
     AC->>Pi: Start subprocess + Prompt()
     Pi-->>AC: message_update / tool_execution_start
     AC-->>S: Broadcast events
@@ -39,7 +39,7 @@ sequenceDiagram
 
 ## Prompt Structure
 
-The prompt is assembled by `PromptBuilder` in `internal/agent/prompt_builder.go`. Sections are ordered so the most cacheable content comes first:
+The prompt is assembled by `PromptBuilder` in `internal/agent/prompt_builder.go`. The prompt now contains two sections — skills are no longer injected at build time:
 
 ```
 ┌────────────────────────────────┐
@@ -48,29 +48,13 @@ The prompt is assembled by `PromptBuilder` in `internal/agent/prompt_builder.go`
 │   Relevant History / Context   │
 │ </memory>                      │
 │                                │
-│ <skill name="git-helper">      │  ← Matched per-task via keyword detection
-│   Skill instructions...        │
-│ </skill>                       │
-│                                │
 │ Task text from user            │  ← Always new (dynamic)
 └────────────────────────────────┘
 ```
 
 **Memory context** is assembled by `GetContextForUserWithTask(userId, task)` — it scores stored conversation entries against the task's keywords and topics, returning the most relevant history alongside the user profile. Because retrieval is task-aware, the memory section changes with each distinct task. AgentLoop's internal `PromptCache` (keyed by `userId + task hash`, TTL 5 min) avoids redundant assembly when the same user repeats an identical task.
 
-**Skill detection** runs before prompt assembly via `DetectSkills(task)`. This is a simple keyword scan — no LLM call. Every available skill has a `triggers` list; if any trigger word appears in the lowercase task text, the skill is included. Matched skills are injected as `<skill name="...">` blocks.
-
-```go
-// DetectSkills — keyword matching, no LLM
-for _, sk := range allSkills {
-    for _, trigger := range sk.Triggers {
-        if strings.Contains(lower, strings.ToLower(trigger)) {
-            matched = append(matched, sk.Name)
-            break
-        }
-    }
-}
-```
+**Skill selection** happens at runtime, not at prompt-build time. When the main agent needs specialized guidance, it calls the `Find_skill` tool with a natural-language query. A lightweight **SkillAgent** subprocess evaluates the query against the skill catalog (name, description, tags for all registered skills) and returns the single best match. The selected skill's full details (instructions, sibling files, directory path) are then available to the main agent. See the [Skills Guide](/guides/skills/) for details.
 
 ## Pi Subprocess Communication
 

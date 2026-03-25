@@ -1,13 +1,13 @@
 ---
 title: Skills
-description: Create and manage skills — on-demand instruction sets that inject into agent prompts.
+description: Create and manage skills — on-demand instruction sets selected by an LLM agent at runtime.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
 ## What Are Skills?
 
-Skills are on-demand instruction sets that AgentLoop injects into the agent prompt when task text matches trigger keywords. Instead of bloating every prompt with specialized instructions, skills activate only when relevant.
+Skills are on-demand instruction sets that AgentLoop provides to the main agent when it needs specialized guidance. Instead of bloating every prompt with specialized instructions, a lightweight **SkillAgent** selects the most relevant skill at runtime when the main agent requests one via the `Find_skill` tool.
 
 ## Creating a Skill
 
@@ -25,7 +25,7 @@ Create `~/.local/share/agentloop/vault/skills/code-review/SKILL.md`:
 ---
 name: code-review
 description: Code review best practices and checklist
-triggers:
+tags:
   - review
   - PR
   - pull request
@@ -60,40 +60,44 @@ pm2 restart agentloop-server
 
 ### Step 4: Test
 
-Run a task that contains a trigger word:
+Run a task that mentions code review:
 
 ```bash
 ./agentloop "review the changes in src/auth.go"
 ```
 
-The skill's instructions are automatically injected into the prompt because the task text contains "review".
+When the main agent determines it needs review guidance, it calls `Find_skill`. The SkillAgent evaluates the skill catalog and selects `code-review` based on its description and tags. The skill's full instructions and any sibling files are returned to the main agent.
 
-## How Trigger Matching Works
+## How Skill Selection Works
 
-For each skill, each trigger keyword is matched against the task text using case-insensitive substring matching:
+AgentLoop uses **LLM-driven skill selection** — no lexical keyword matching.
 
-```go
-strings.Contains(strings.ToLower(taskText), strings.ToLower(trigger))
-```
+### The `Find_skill` Tool
 
-If **any** trigger matches, the entire skill's instructions are injected into the prompt as a `<skill>` block:
+When the main agent needs specialized guidance, it calls `Find_skill` with a natural-language query describing what it needs (e.g., `"I need code review best practices"`).
 
-```xml
-<skill name="code-review">
-When reviewing code, follow this checklist:
-...
-</skill>
-```
+### The SkillAgent
 
-Multiple skills can match the same task.
+A short-lived subprocess receives the query along with the **skill catalog** — a compact list of every registered skill's `name`, `description`, and `tags`. The SkillAgent reasons over this catalog and returns the **single best matching skill**, or `"none"` if no skill is relevant.
+
+### Selection Flow
+
+1. Main agent calls `Find_skill` with a descriptive query
+2. SkillAgent receives the query + skill catalog (name, description, tags for all skills)
+3. SkillAgent picks the single most relevant skill (or `"none"`)
+4. The selected skill's full details (instructions, files, directory path) are returned to the main agent
+
+<Aside type="tip">
+  Tags are semantic hints, not lexical triggers. A well-written `description` is the primary signal the SkillAgent uses. Tags provide additional context (e.g., related technologies or use cases).
+</Aside>
 
 ## SKILL.md Format
 
 ```markdown
 ---
 name: skill-name          # Required (defaults to directory name if absent)
-description: What it does  # Optional
-triggers:                  # Required for auto-detection
+description: What it does  # Primary signal for LLM-driven selection
+tags:                      # Optional — semantic hints for the SkillAgent
   - keyword1
   - keyword2
 ---
@@ -102,9 +106,20 @@ Markdown instructions here...
 ```
 
 - **name** — Unique identifier for the skill
-- **description** — Human-readable description (used in logs)
-- **triggers** — Array of keywords for auto-activation
+- **description** — Human-readable description; the primary signal the SkillAgent uses to evaluate relevance
+- **tags** — Optional array of semantic hints that help the SkillAgent match the skill to a query
 - **Body** — Everything after the second `---` delimiter, written in markdown
+
+## Sibling Files
+
+Any non-hidden files placed alongside `SKILL.md` in the skill directory are automatically discovered and returned with the skill when selected. This lets you bundle scripts, templates, or config files with a skill.
+
+```
+~/.local/share/agentloop/vault/skills/deploy/
+├── SKILL.md
+├── deploy.sh
+└── config.yaml
+```
 
 ## Skill Directories
 

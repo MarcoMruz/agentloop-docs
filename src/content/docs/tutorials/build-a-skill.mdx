@@ -7,7 +7,7 @@ import { Aside } from '@astrojs/starlight/components';
 
 ## Goal
 
-Create a **git-helper** skill that provides Git workflow guidance whenever a task mentions Git-related keywords.
+Create a **git-helper** skill that provides Git workflow guidance when the agent needs help with Git operations.
 
 ## Step 1: Create the Skill Directory
 
@@ -23,7 +23,7 @@ Create `~/.local/share/agentloop/vault/skills/git-helper/SKILL.md`:
 ---
 name: git-helper
 description: Git workflow best practices and conventional commits
-triggers:
+tags:
   - git
   - commit
   - branch
@@ -46,8 +46,12 @@ When working with Git, follow these conventions:
 ### Frontmatter Breakdown
 
 - **`name: git-helper`** — Unique identifier, shown in logs
-- **`description`** — Human-readable, for documentation purposes
-- **`triggers`** — Any of these keywords in the task text will activate this skill
+- **`description`** — Human-readable; the primary signal the SkillAgent uses to evaluate relevance
+- **`tags`** — Semantic hints that help the SkillAgent match this skill to a query
+
+<Aside type="tip">
+  `tags` are optional. A well-written `description` is often the most important factor for selection — the SkillAgent reasons over descriptions and tags together to pick the best skill.
+</Aside>
 
 ## Step 3: Restart the Server
 
@@ -67,13 +71,13 @@ You should see a log entry indicating the `git-helper` skill was registered.
 
 ## Step 4: Test
 
-Run a task that contains a trigger word:
+Run a task that involves Git:
 
 ```bash
 ./agentloop "create a feature branch for the login page"
 ```
 
-The skill activates because `"branch"` is in the trigger list. The agent now has the Git workflow instructions in its prompt.
+When the main agent determines it needs Git guidance, it calls `Find_skill` with a query like `"Git branching conventions"`. The SkillAgent evaluates the skill catalog and selects `git-helper` based on its description and tags. The skill's instructions are then available to the agent.
 
 ## Step 5: Verify
 
@@ -88,28 +92,21 @@ The agent should follow the conventions from the skill:
 
 ## How It Works
 
-When the task text is processed, `PromptBuilder.DetectSkills()` runs:
+AgentLoop uses **LLM-driven skill selection** instead of lexical keyword matching:
 
-1. For each registered skill, check each trigger keyword
-2. Matching is case-insensitive substring: `strings.Contains(strings.ToLower("create a feature branch for the login page"), "branch")` → **match**
-3. The skill's instructions are injected into the prompt as:
-
-```xml
-<skill name="git-helper">
-# Git Helper
-When working with Git, follow these conventions:
-...
-</skill>
-```
-
-Multiple skills can match the same task. They're all injected.
+1. The main agent encounters a task where it needs specialized guidance
+2. It calls the `Find_skill` tool with a natural-language query (e.g., `"I need help with Git branching"`)
+3. A lightweight **SkillAgent** subprocess receives the query along with the **skill catalog** — a compact list of every registered skill's `name`, `description`, and `tags`
+4. The SkillAgent reasons over the catalog and returns the **single best matching skill** (or `"none"`)
+5. The selected skill's full details (instructions, sibling files, directory path) are returned to the main agent
 
 <Aside type="tip">
-  Choose specific trigger words to avoid false matches. For example, use `"git push"` instead of just `"push"` if you only want the skill to activate for Git operations.
+  Write a clear, specific `description` — it's the primary signal. Use `tags` to provide additional semantic context like related technologies or use cases.
 </Aside>
 
 ## Next Steps
 
 - Add more skills for your common workflows (code review, deployment, testing)
+- Bundle helper scripts alongside `SKILL.md` — they're auto-discovered and returned with the skill
 - See [Skills Format Reference](/reference/skills-format/) for the complete SKILL.md specification
 - See [Skills Guide](/guides/skills/) for additional examples

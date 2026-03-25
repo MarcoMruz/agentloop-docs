@@ -59,6 +59,7 @@ graph TD
         ME["MemEvolve"]
         Core["Agent Core"]
         Skills["Skills Registry"]
+        SA["SkillAgent"]
         HITL["HITL Gate"]
         Vault["Vault"]
         Sec["Security"]
@@ -82,7 +83,8 @@ graph TD
     Mem --> ME
     ME --> Vault
     ME --> Skills
-    Skills --> Core
+    Skills --> SA
+    SA -->|Find_skill| SM
     HITL --> Core
     Core -->|stdin/stdout JSON RPC| Pi
     Pi --> Ext
@@ -134,7 +136,7 @@ Notifications have a `method` field but **no `id`**. Clients cannot respond to t
 | [Agent Core](/architecture/agent-core/) | `internal/agent` | Prompt building, pi subprocess management, event loop |
 | [Memory Engine](/architecture/memory-system/) | `internal/memory` | Profiles, conversation logs, compaction, caching |
 | [MemEvolve](/memevolve/overview/) | `internal/memevolve` | Self-evolving memory pipeline — scores sessions, clusters failures, and applies targeted improvements to retrieval config and skills |
-| [Skills Registry](/guides/skills/) | `internal/skills` | On-demand instruction injection |
+| [Skills Registry](/guides/skills/) | `internal/skills` | Skill catalog and LLM-driven selection via SkillAgent |
 | [HITL Gate](/architecture/hitl-flow/) | `internal/hitl` | Human approval flow types and formatting |
 | [Vault](/guides/vault-and-obsidian/) | `internal/vault` | Session persistence, Obsidian-compatible markdown |
 | [Security](/architecture/security-model/) | `internal/security` | Path validation, SSRF protection, docker guards |
@@ -156,7 +158,7 @@ server/handler.go → session.Manager.StartSession()
     │      orchestrator.Run(ctx, orchestratorCtx, task, session, callbacks)
     │      ├─ Planner assesses: "single" → Core.Run() / "orchestrate" → loop
     │      agent.Core.Run(ctx, memoryContext, task, session)
-    │      ├─ Build prompt: <memory>...</memory> + task text
+    │      ├─ Build prompt: <memory>...</memory> + task text (skills loaded on demand via Find_skill)
     │      ├─ Create PiBridge, register event + HITL handlers
     │      ├─ bridge.Start() launches pi subprocess
     │      ├─ bridge.Prompt() sends task
