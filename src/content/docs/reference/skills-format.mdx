@@ -1,6 +1,6 @@
 ---
 title: Skills Format Reference
-description: Complete specification for SKILL.md files, trigger matching, and the skills registry.
+description: Complete specification for SKILL.md files, LLM-driven skill selection, and the skills registry.
 ---
 
 ## File Location
@@ -19,15 +19,15 @@ Example: `~/.local/share/agentloop/vault/skills/git-helper/SKILL.md`
 ---
 name: skill-name
 description: Optional human-readable description
-triggers:
+tags:
   - keyword1
   - keyword2
-  - multi word trigger
+  - multi word tag
 ---
 
 # Skill Title
 
-Markdown instructions that will be injected into the agent prompt.
+Markdown instructions returned to the agent when this skill is selected.
 
 Use any markdown: headings, lists, code blocks, etc.
 ```
@@ -37,8 +37,8 @@ Use any markdown: headings, lists, code blocks, etc.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `name` | string | No | Directory name | Unique skill identifier |
-| `description` | string | No | `""` | Human-readable description |
-| `triggers` | string[] | Yes (for auto-detection) | — | Keywords that activate the skill |
+| `description` | string | No | `""` | Human-readable description — used by the SkillAgent to evaluate relevance |
+| `tags` | string[] | No | — | Semantic hints that help the SkillAgent match the skill to a query |
 
 ## Parsing Algorithm
 
@@ -47,34 +47,25 @@ Use any markdown: headings, lists, code blocks, etc.
 3. YAML unmarshal the frontmatter section
 4. Trim whitespace from the body (everything after second `---`)
 5. If `name` is empty in frontmatter, use the directory name as fallback
+6. Scan the skill directory for sibling files (non-`SKILL.md`, non-hidden) and attach them as `SkillFile` entries
 
-## Trigger Matching
+## Skill Selection
 
-For each skill in the registry, for each trigger keyword:
+AgentLoop uses **LLM-driven skill selection** instead of lexical keyword matching. When the main agent needs a skill, it calls the `Find_skill` tool with a natural-language query describing what it needs.
 
-```go
-strings.Contains(strings.ToLower(taskText), strings.ToLower(trigger))
-```
+### How It Works
 
-- **Case-insensitive** substring match
-- If **any** trigger matches, the skill activates
-- **Multiple skills** can match the same task
-- Matching runs in `PromptBuilder.DetectSkills()`
+1. The main agent calls `Find_skill` with a descriptive query (e.g., `"I need help with Git branching conventions"`)
+2. A lightweight **SkillAgent** subprocess receives the query along with the **skill catalog** — a compact list of every registered skill's `name`, `description`, and `tags`
+3. The SkillAgent reasons over the catalog and returns the **single best matching skill**, or `"none"` if no skill is relevant
+4. The selected skill's full details (instructions, files, directory path) are returned to the main agent
 
-## Prompt Injection
+### Key Differences from Previous Versions
 
-When a skill matches, its instructions are wrapped in a `<skill>` XML tag and inserted into the prompt:
-
-```xml
-<skill name="git-helper">
-# Git Helper
-
-When working with Git, follow these conventions:
-- Use conventional commits...
-</skill>
-```
-
-The `<skill>` block is placed between the `<memory>` block and the task text.
+- **No lexical matching** — skills are not activated by substring keyword matching against task text
+- **Single skill per query** — the SkillAgent picks the best match, not all matches
+- **Runtime selection** — skills are discovered on demand when the agent calls `Find_skill`, not at prompt-build time
+- **Tags are hints, not triggers** — `tags` provide semantic context to the SkillAgent but are not matched lexically
 
 ## Skills Registry
 
@@ -87,21 +78,47 @@ Skills are loaded on server startup from all directories in `skills.skill_dirs` 
 func (r *Registry) LoadAll() error
 ```
 
-### Detection
+During loading, `LoadAll()` also scans each skill directory for sibling files and attaches them as `SkillFile` entries.
+
+### Catalog
 
 ```go
-// DetectSkills matches task text against all registered triggers
-func (pb *PromptBuilder) DetectSkills(taskText string) []Skill
+// Catalog returns a compact list of all loaded skills (name + description + tags only).
+// Used by the SkillAgent for selection.
+func (r *Registry) Catalog() []SkillCatalogEntry
 ```
 
 ### Skill Struct
 
 ```go
 type Skill struct {
-    Name         string   // Unique identifier
-    Description  string   // Human-readable
-    Triggers     []string // Keywords for auto-activation
-    Instructions string   // Markdown body from SKILL.md
+    Name         string      // Unique identifier
+    Description  string      // Human-readable
+    Tags         []string    // Semantic hints for LLM-driven selection
+    Instructions string      // Markdown body from SKILL.md
+    Files        []SkillFile // Auto-scanned sibling files in the skill directory
+    Dir          string      // Absolute path to the skill directory
+}
+```
+
+### SkillFile Struct
+
+```go
+type SkillFile struct {
+    Name        string // Filename (e.g., "deploy.sh")
+    Path        string // Absolute filesystem path
+    Type        string // File extension without dot (e.g., "sh", "ts")
+    Description string // From optional files: manifest in SKILL.md frontmatter
+}
+```
+
+### SkillCatalogEntry Struct
+
+```go
+type SkillCatalogEntry struct {
+    Name        string   // Skill identifier
+    Description string   // Human-readable description
+    Tags        []string // Semantic hints
 }
 ```
 
@@ -112,13 +129,18 @@ skills:
   skill_dirs:
     - ~/.local/share/agentloop/vault/skills
     - ~/my-team-skills
+  agent:
+    binary: ""    # Defaults to main pi binary
+    provider: ""  # Defaults to main pi provider
+    model: ""     # Defaults to main pi model
 ```
 
-Multiple directories can be configured. All are scanned on startup.
+Multiple directories can be configured. All are scanned on startup. The `agent` section configures the SkillAgent subprocess — empty values inherit from the main `pi` config.
 
 ## Best Practices
 
-- Use specific trigger words to avoid false matches
+- Write a clear, specific `description` — it's the primary signal the SkillAgent uses to evaluate relevance
+- Use `tags` to provide additional semantic context (e.g., related technologies, use cases)
 - Keep instructions focused — don't duplicate general knowledge the LLM already has
-- Test triggers with `./agentloop "task containing trigger word"`
+- Place helper files (scripts, templates) alongside `SKILL.md` — they're auto-discovered and returned with the skill
 - Restart the server after adding or modifying skills
