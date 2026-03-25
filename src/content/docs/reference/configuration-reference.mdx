@@ -37,6 +37,11 @@ import { Aside } from '@astrojs/starlight/components';
 | `memory.compaction_strategy` | `string` | `rolling` | Strategy: `rolling`, `facts`, or `topics` |
 | `memory.max_context_tokens` | `int` | `3000` | Max tokens in assembled memory context |
 | `memory.prompt_cache_ttl_minutes` | `int` | `60` | Configured cache TTL (actual in-code TTL is 5 min) |
+| `memory.embedding_dims` | `int` | `0` | Vector embedding dimension; `0` disables vector search (keyword-only) |
+| `memory.agent.enabled` | `bool` | `false` | Enable background pi subprocess for ACE delta extraction and embeddings |
+| `memory.agent.binary` | `string` | `pi` | Path to pi binary for the background memory agent |
+| `memory.agent.provider` | `string` | `anthropic` | LLM provider for the background memory agent |
+| `memory.agent.model` | `string` | `claude-haiku-4-5-20251001` | Model for background memory operations (use a cheap/fast model) |
 
 ## Sessions
 

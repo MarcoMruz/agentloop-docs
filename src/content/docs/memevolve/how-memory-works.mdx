@@ -198,4 +198,4 @@ Output (edges first):         [A, C, E, D, B]
 func (e *Engine) SetPipeline(p *evolve.PipelineHolder) { e.pipeline = p }
 ```
 
-When a pipeline is set, `GetContextForUser()` calls `pipeline.Get().Retrieve()` instead of the legacy profile+conversation path. If retrieval returns an error, the engine falls back to legacy behavior silently — backward compatible.
+When a pipeline is set, `GetContextForUserWithTask()` delegates to `pipeline.Get().Retrieve()` for **Standard and Detailed** context levels. The **Minimal** level bypasses the pipeline entirely and returns profile + top-3 notes directly. If pipeline retrieval returns an error, the engine falls back to the indexed keyword search silently — backward compatible.
