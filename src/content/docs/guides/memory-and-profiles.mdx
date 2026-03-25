@@ -1,6 +1,6 @@
 ---
 title: Memory & Profiles
-description: How memory works, viewing and editing profiles, compaction strategies, and tuning tips.
+description: How memory works, viewing and editing profiles, memory notes, memory tools, compaction strategies, and tuning tips.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -11,9 +11,10 @@ Memory operates automatically — no user action is needed. After every task:
 
 1. **Conversation logged** — The interaction is saved to `vault/memory/contexts/{userId}-{date}.md`
 2. **Profile updated** — Heuristics extract project paths, topics, and tool usage from the conversation
-3. **Cache invalidated** — The prompt cache for the user is cleared
+3. **Atomic note extracted** — If `memory.agent.enabled: true`, a background subprocess distills one preference delta from the conversation into the note store
+4. **Cache invalidated** — The prompt cache for the user is cleared
 
-The next time a task runs, the Memory Engine assembles fresh context from the profile and relevant history.
+The next time a task runs, the Memory Engine assembles fresh context from the profile, relevant history, and matching memory notes.
 
 ## Viewing Your Profile
 
@@ -79,6 +80,72 @@ echo '{"jsonrpc":"2.0","id":1,"method":"memory.forget","params":{"userId":"marco
   socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
 ```
 
+## Memory Notes
+
+Memory notes are atomic, self-contained facts stored in `vault/memory/notes/<userId>.db`. One idea per note. The agent adds, updates, and deletes notes automatically as it learns your preferences.
+
+When notes are relevant to the current task, they appear in the agent's context as:
+
+```
+## Memory Notes (3 relevant)
+- [note-a1b2c3d4] user prefers Go over Python for backends
+- [note-e5f6g7h8] project uses Postgres, not MySQL
+- [note-i9j0k1l2] always run tests before committing
+```
+
+The `[note-XXXXXXXX]` ID is what the agent passes to `Update_memory` or `Delete_memory` when a note needs to change.
+
+Notes are retrieved by keyword overlap and, if vector embeddings are enabled (`memory.embedding_dims > 0`), by cosine similarity. When a note is added, it is automatically linked to the top-3 related notes by keyword.
+
+## Memory Tools
+
+The agent has four memory tools, autoloaded via `extensions/memory-tools.ts`. These tools are called by the agent — not by users directly.
+
+### `Add_memory`
+
+Persists a new atomic note. The agent calls this when you state a new preference, reveal a project or workflow pattern, or correct a prior assumption.
+
+```
+content: "user prefers functional React components over class components"
+keywords: ["react", "components", "functional", "preference"]
+tags: ["preference", "tool"]
+```
+
+### `Update_memory`
+
+Updates an existing note by ID. Called when a previously saved preference changes.
+
+```
+id: "note-a1b2c3d4"
+content: "user switched from React to Vue for new projects"
+keywords: ["vue", "react", "frontend", "preference"]
+```
+
+### `Delete_memory`
+
+Deletes a note by ID. Called when a preference is no longer valid.
+
+```
+id: "note-a1b2c3d4"
+reason: "user migrated from React to Vue"
+```
+
+### `Retrieve_memory`
+
+Searches notes for context relevant to the current subtask. Called mid-task when the agent needs to recall specific details not present in the injected context.
+
+```
+query: "preferred testing framework for Go projects"
+top_k: 5
+```
+
+### Example: Framework Switch
+
+When you say "we migrated from Django to FastAPI":
+
+1. Agent calls `Delete_memory` on the Django note (using its ID from the `## Memory Notes` block)
+2. Agent calls `Add_memory` with `content="user uses FastAPI for Python web services"`, `keywords=["fastapi","python","web"]`, `tags=["preference","tool"]`
+
 ## Compaction Strategy Guide
 
 When conversation history grows beyond `compaction_threshold` (default: 40 entries), a compaction strategy runs. Choose based on your usage pattern:
@@ -131,6 +198,18 @@ memory:
   compaction_threshold: 20  # Default: 40
 ```
 
+### Enable Vector Search
+
+Set `embedding_dims` to your embedding model's dimension and enable the background agent. Vector search runs alongside keyword search and results are deduplicated.
+
+```yaml
+memory:
+  embedding_dims: 768
+  agent:
+    enabled: true
+    model: claude-haiku-4-5-20251001
+```
+
 <Aside type="tip">
-  Profile updates use heuristics only — no LLM calls. They extract project paths from `~/...` patterns and topics from a 33-domain taxonomy. This makes memory updates fast and free.
+  Profile updates (projects, topics, tools) use heuristics only — no LLM calls. ACE delta extraction (atomic notes from conversations) requires `memory.agent.enabled: true`.
 </Aside>

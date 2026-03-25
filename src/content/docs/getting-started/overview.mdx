@@ -16,10 +16,11 @@ AgentLoop wraps pi and adds everything needed for production use.
 | pi (Coding Agent) | AgentLoop (Orchestrator) |
 |---|---|
 | 15+ LLM providers (Anthropic, OpenAI, etc.) | Persistent memory (profiles, conversation history) |
-| File read/write/edit tools | HITL safety gates for dangerous operations |
-| Bash execution, grep, find, ls | Session management with concurrency limits |
-| TypeScript extension system | Vault persistence (Obsidian-compatible) |
-| JSON-RPC subprocess communication | Skills system (on-demand instruction injection) |
+| File read/write/edit tools | Atomic notes (Zettelkasten-style persistent knowledge) |
+| Bash execution, grep, find, ls | HITL safety gates for dangerous operations |
+| TypeScript extension system | Session management with concurrency limits |
+| JSON-RPC subprocess communication | Vault persistence (Obsidian-compatible) |
+| | Skills system (on-demand instruction injection) |
 | | Multi-client support (CLI, Slack, future web UI) |
 | | Prompt caching and context compaction |
 | | Unix socket JSON-RPC server |
@@ -48,7 +49,7 @@ graph TD
     ME --> Vault
     Core --> Pi["pi subprocess (per session)"]
     Pi --> Tools["Tools: read, write, edit, bash, grep, find, ls"]
-    Pi --> Ext["Extensions: security-policy, docker-guard"]
+    Pi --> Ext["Extensions: security-policy, docker-guard, memory-tools"]
     Server --> Vault["Vault (~/.local/share/agentloop/vault/)"]
 ```
 

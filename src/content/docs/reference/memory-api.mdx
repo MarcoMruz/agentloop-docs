@@ -1,6 +1,6 @@
 ---
 title: Memory API Reference
-description: JSON-RPC methods, Go engine API, UserProfile schema, and compaction algorithms.
+description: JSON-RPC methods, Go engine API, AtomicNote and UserProfile schemas, and compaction algorithms.
 ---
 
 ## JSON-RPC Methods
@@ -13,7 +13,7 @@ Get the assembled memory context for a user.
 
 **Result:** `{ context: string }`
 
-The returned context is the fully assembled prompt prefix including profile and relevant history.
+The returned context is the fully assembled prompt prefix including profile, relevant history, and memory notes.
 
 ### `memory.update`
 
@@ -39,7 +39,7 @@ Remove a user fact from the profile's fact sheet.
 
 ### `GetContextForUser(userId string) (string, error)`
 
-Assembles full memory context from profile and last 30 conversation entries.
+Assembles full memory context from profile and last 30 conversation entries. Used for non-task contexts (e.g. thread-scoped retrieval fallback).
 
 1. Check prompt cache → return if hit
 2. Load user profile from `ProfileStore`
@@ -51,13 +51,17 @@ Assembles full memory context from profile and last 30 conversation entries.
 
 ### `GetContextForUserWithTask(userId, task string) (string, error)`
 
-Task-aware context assembly using indexed search:
+Task-aware context assembly with MemScheduler routing:
 
-1. Extract keywords and topics from task text
-2. Score each conversation entry by keyword overlap (Jaccard similarity) + topic bonus (+0.2)
-3. Return top 8 matching entries, or 5 most recent if no matches found
+1. **MemScheduler** — call `Schedule(task)` to determine context level (Minimal / Standard / Detailed)
+2. **Minimal** — return profile + top-3 keyword-matched notes; skip history entirely
+3. **Standard / Detailed** — delegate to MemEvolve pipeline if configured; otherwise:
+   - Extract keywords and topics from task text
+   - Score each conversation entry by keyword overlap (Jaccard similarity) + topic bonus (+0.2)
+   - Return top 8 entries (Standard) or top 16 entries (Detailed), or 5 most recent if no matches found
+   - Augment with notes: vector search (if embeddings available), then keyword search; deduplicate
 
-### `RecordInteraction(userId, role, content string) error`
+### `RecordInteraction(userId, userMsg, agentReply string, toolsUsed []string, conversationContextID string)`
 
 Save a conversation turn and update the user profile.
 
@@ -65,7 +69,30 @@ Save a conversation turn and update the user profile.
 - Appends entry to today's conversation log
 - Updates conversation index (keywords, topics, summary)
 - Runs heuristic profile updates (project paths, topics, tool usage)
+- If `LLMClient` is set: asynchronously extracts one atomic note (ACE delta) from the conversation
 - Invalidates prompt cache
+
+### `AddNote(note notes.AtomicNote) (string, error)`
+
+Persist an atomic note, invalidate the user's context cache, and auto-link to the top-3 keyword-related existing notes.
+
+**Returns:** assigned note ID.
+
+### `UpdateNote(note notes.AtomicNote) error`
+
+Update an existing atomic note and invalidate the user's context cache.
+
+### `DeleteNote(userID, noteID string) error`
+
+Remove an atomic note by ID and invalidate the user's context cache.
+
+### `SetNoteStore(s notes.NoteStore)`
+
+Wire in an atomic notes store. Must be called before the engine handles requests.
+
+### `SetLLMClient(c llm.LLMClient)`
+
+Wire in the background LLM client used for embeddings and ACE delta extraction.
 
 ### `UpdateUserFact(userId, key, value string) error`
 
@@ -78,6 +105,33 @@ Set a fact in the user's profile fact sheet.
 Remove a fact from the user's profile fact sheet.
 
 **Side effects:** Invalidates prompt cache.
+
+## AtomicNote Schema
+
+Stored in per-user SQLite databases at `vault/memory/notes/<userId>.db`:
+
+```go
+type AtomicNote struct {
+    ID          string    `json:"id"`           // format: note-XXXXXXXX
+    UserID      string    `json:"user_id"`
+    Content     string    `json:"content"`      // the single atomic fact
+    Keywords    []string  `json:"keywords"`     // 3-7 lowercase terms
+    Tags        []string  `json:"tags"`         // e.g. "preference", "tool", "project", "workflow"
+    Description string    `json:"description"`
+    Embedding   []float32 `json:"embedding,omitempty"` // set when memory.agent.enabled: true
+    Connections []string  `json:"connections"`  // IDs of auto-linked related notes
+    CreatedAt   time.Time `json:"created_at"`
+    UpdatedAt   time.Time `json:"updated_at"`
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `ID` | Assigned on insert; format `note-XXXXXXXX` |
+| `Keywords` | Used for Jaccard keyword search |
+| `Tags` | Category labels for filtering |
+| `Embedding` | Dense vector for cosine similarity search; populated when `memory.agent.enabled: true` and `memory.embedding_dims > 0` |
+| `Connections` | Bidirectional links to related notes; populated automatically on `AddNote()` |
 
 ## UserProfile Schema
 
@@ -140,42 +194,56 @@ I'll look at the test files and identify the failures...
 
 ## Compaction Algorithms
 
+Compaction is a **no-op** when raw history already fits within the token budget — the original text is returned unchanged. The budget passed to the compactor is `max_context_tokens − profile tokens`, with a minimum of 200 tokens. Token count is estimated as `len(text) / 4`.
+
+When the budget is exceeded, the selected strategy runs. History is split into turns on `### ` markers before any strategy is applied.
+
 ### Rolling (default)
 
+Keeps the last 5 turns verbatim. For each older turn, extracts the first non-header, non-empty line and truncates it to 100 chars.
+
+Output format:
+
 ```
-If entries > compaction_threshold:
-  1. Take entries[:-5] (all but last 5)
-  2. Summarize each as "- {first 80 chars}"
-  3. Prefix: "Recent conversation (summarized):"
-  4. Append last 5 entries verbatim
+**Earlier (summarized):**
+- <first meaningful line of older turn, ≤100 chars>
+...
+
+**Recent:**
+### <full turn>
+...
 ```
+
+If the combined output still exceeds the token budget it is trimmed from the front.
 
 ### Facts
 
+Scans every line across all history for signal keywords and structural markers. A line is kept if it contains any of:
+
+`decided`, `confirmed`, `created`, `fixed`, `deployed`, `merged`, `installed`, `configured`, `updated`, `deleted`, `error`, `failed`
+
+or if it starts with `- ` (bullet) or `Tools:` (tool call record).
+
+Each kept line is truncated to 150 chars. Only the 30 most recent matching lines are retained.
+
+Output format:
+
 ```
-If entries > compaction_threshold:
-  1. Scan all entries for action keywords:
-     decided, created, fixed, deployed, configured,
-     implemented, updated, removed, added, changed
-  2. Keep only entries containing these keywords
-  3. Format: "Key decisions and actions:"
-  4. "- {matching line}"
+**Key facts:**
+<matching line>
+...
 ```
 
 ### Topics
 
-```
-If entries > compaction_threshold:
-  1. For each entry, determine its topic(s)
-  2. Keep only the most recent entry per unique topic
-  3. Format: "Conversation by topic:"
-  4. Group entries under topic headers
-```
+Splits history into turns on `### ` markers. Derives a topic key from the first 3 words of each turn (lowercased). When multiple turns share the same topic key, only the most recent is kept.
+
+Output: deduplicated turns joined by newline, no topic headers added.
 
 ## Prompt Cache
 
 - **Storage:** In-memory (not persisted)
 - **Key format:** `ctx:<userId>` or `ctx:<userId>:<taskCacheKey>`
 - **TTL:** 5 minutes (hardcoded)
-- **Invalidation triggers:** `RecordInteraction()`, `UpdateUserFact()`, `ForgetUserFact()`
+- **Invalidation triggers:** `RecordInteraction()`, `UpdateUserFact()`, `ForgetUserFact()`, `AddNote()`, `UpdateNote()`, `DeleteNote()`
 - **Task cache key:** Normalized task text, max 32 chars, special chars replaced with `-`
