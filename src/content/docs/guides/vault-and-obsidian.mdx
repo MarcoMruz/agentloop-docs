@@ -1,6 +1,6 @@
 ---
 title: Vault & Obsidian
-description: How AgentLoop stores sessions as Obsidian-compatible Markdown files and vault directory structure.
+description: How AgentLoop stores sessions, atomic notes, and memory as Obsidian-compatible files using SQLite and Markdown.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -17,10 +17,15 @@ import { Aside } from '@astrojs/starlight/components';
 │   ├── contexts/          # Conversation logs per user per day
 │   │   ├── marco-2026-02-27.md
 │   │   └── marco-2026-02-27.idx.json
+│   ├── notes/             # Atomic notes — one SQLite DB per user
+│   │   └── marco.db
+│   ├── evolved/           # Memory pipeline configuration (hot-reloadable)
+│   │   └── pipeline-config.yaml
 │   └── cache/             # Reserved (prompt cache is in-memory)
-└── skills/                # Skill directories with SKILL.md files
-    └── git-helper/
-        └── SKILL.md
+├── skills/                # Skill directories with SKILL.md files
+│   └── git-helper/
+│       └── SKILL.md
+└── agents/                # Agent markdown behavior files
 ```
 
 ## Session Notes
@@ -44,6 +49,9 @@ Each completed session is saved as a Markdown file with YAML frontmatter.
 | `source` | string | Client source: `cli`, `slack` |
 | `user_id` | string | User who started the task |
 | `tags` | string[] | Tags (empty by default) |
+| `thread_id` | string | Slack thread ID (omitted for CLI) |
+| `channel_id` | string | Slack channel ID (omitted for CLI) |
+| `conversation_context_id` | string | Thread scope key for Slack (`channel:timestamp`) |
 
 ### Body Sections
 
@@ -92,26 +100,37 @@ Since vault files are plain Markdown with YAML frontmatter, they're directly com
 - Graph view showing connections
 - Full markdown rendering of transcripts
 
+<Aside type="note">
+  Atomic notes are stored in SQLite (not Markdown), so they won't appear as individual files in Obsidian. Session transcripts and conversation logs remain Markdown and are fully compatible.
+</Aside>
+
 ## Memory Files
 
 ### User Profiles
 
-Stored as YAML in `vault/memory/users/{userId}.yaml`:
+Stored as YAML in `vault/memory/users/{user_id}.yaml`. Fields use snake_case.
 
 ```yaml
-userid: marco
+user_id: marco
 name: Marco
-communicationstyle: concise, technical
+communication_style: concise, technical
 preferences:
   language_preference: TypeScript
-frequentprojects:
+frequent_projects:
   - ~/travel-app
   - ~/agentloop
-recenttopics:
+tool_preferences:
+  - bash
+  - edit
+fact_sheet:
+  timezone: Europe/Berlin
+recent_topics:
   - authentication
   - testing
-lastupdated: "2026-02-27T14:00:00Z"
+last_updated: "2026-02-27T14:00:00Z"
 ```
+
+Profiles are updated heuristically after each interaction — no LLM call is made. Topics and project paths are extracted from messages and tool usage patterns.
 
 ### Conversation Logs
 
@@ -125,9 +144,121 @@ Fix the failing tests in user.go
 I'll look at the test files and identify the failures...
 ```
 
-Each log file has an optional index sidecar (`*.idx.json`) for fast keyword/topic search.
+Each log file has a JSON index sidecar (`*.idx.json`) for fast keyword/topic search:
+
+```json
+{
+  "entries": [
+    {
+      "ts": "14:00:00",
+      "role": "user",
+      "keywords": ["failing", "tests", "user.go"],
+      "topics": null,
+      "summary": "Fix the failing tests in user.go"
+    },
+    {
+      "ts": "14:00:05",
+      "role": "assistant",
+      "keywords": ["test", "files", "failures"],
+      "topics": null,
+      "summary": "I'll look at the test files and identify the failures..."
+    }
+  ]
+}
+```
+
+Logs older than `conversation_retain_days` (default: 30) are automatically deleted.
+
+### Atomic Notes (SQLite)
+
+Atomic notes are the primary long-term memory store. Each user has a dedicated SQLite database at `vault/memory/notes/{user_id}.db`.
+
+**Schema:**
+
+```sql
+CREATE TABLE notes (
+    id          TEXT PRIMARY KEY,            -- "note-" + uuid[:8]
+    user_id     TEXT NOT NULL,
+    content     TEXT NOT NULL,               -- The note content
+    keywords    TEXT NOT NULL DEFAULT '[]',  -- JSON array of keywords
+    tags        TEXT NOT NULL DEFAULT '[]',  -- JSON array of tags
+    description TEXT NOT NULL DEFAULT '',    -- Short description (≤120 chars)
+    connections TEXT NOT NULL DEFAULT '[]',  -- JSON array of related note IDs
+    created_at  TEXT NOT NULL,               -- RFC3339Nano timestamp
+    updated_at  TEXT NOT NULL
+);
+```
+
+When vector search is enabled (`embedding_dims > 0`), a second virtual table stores embeddings:
+
+```sql
+CREATE VIRTUAL TABLE note_embeddings USING vec0(
+    note_id   TEXT PRIMARY KEY,
+    embedding float[768]   -- dimension matches embedding_dims config
+);
+```
+
+Notes form a network — each note can reference other notes via `connections`, enabling graph-style retrieval without a graph database.
+
+## How Context Is Assembled
+
+When a session starts, AgentLoop builds a memory context block injected into the agent prompt:
+
+1. **Check prompt cache** — a 5-minute in-memory TTL cache avoids rebuilding context on every turn (maximizes prompt cache hits).
+2. **Load user profile** — from `memory/users/{user_id}.yaml`.
+3. **Load recent conversations** — last 30 entries from `memory/contexts/` daily logs.
+4. **Compact history** — fits conversation history within the token budget using the configured compaction strategy.
+5. **Inject** — rendered as a `<memory>` block in the agent system prompt.
+
+### Context Levels
+
+The amount of memory context loaded scales with task complexity:
+
+| Level | Trigger | Notes included | History |
+|-------|---------|----------------|---------|
+| Minimal | ≤3 words, no complexity keywords | Top 3 | None |
+| Standard | Default | Top 8 | Compacted |
+| Detailed | >25 words or complexity keyword | Top 16 | Full |
+
+Complexity keywords include: `refactor`, `architect`, `redesign`, `migrate`, `integrate`, `security`, `performance`, `debug`, `analyse`.
+
+### Compaction Strategies
+
+Configure via `memory.compaction_strategy`:
+
+| Strategy | Behavior |
+|----------|----------|
+| `rolling` (default) | Keeps last 5 turns verbatim; summarizes older turns as bullet points |
+| `facts` | Extracts only lines containing signal words: `decided`, `fixed`, `deployed`, `error`, etc. |
+| `topics` | Groups by topic (first 3 words) and keeps only the most recent turn per topic |
+
+## Memory Pipeline (MemEvolve)
+
+The memory system uses a pluggable pipeline with hot-reloadable config at `vault/memory/evolved/pipeline-config.yaml`. The pipeline has four stages:
+
+| Stage | Role |
+|-------|------|
+| **Encoder** | Extracts keywords, topics, and tool patterns from messages |
+| **Storer** | Persists memory units to markdown + index sidecar |
+| **Retriever** | Scores and ranks stored units for retrieval (Jaccard by default) |
+| **Manager** | Compacts history using the configured strategy |
+
+The config can be updated without restarting — the pipeline holder performs an atomic swap on reload.
 
 ## Configuration
+
+```yaml
+memory:
+  max_profile_entries: 50          # Max facts stored in user profile
+  conversation_retain_days: 30     # Auto-delete conversations older than this
+  compaction_strategy: rolling     # rolling | facts | topics
+  max_context_tokens: 3000         # Max tokens injected as memory context
+  prompt_cache_ttl_minutes: 60     # In-memory prompt cache TTL
+  embedding_dims: 0                # 0 = keyword search only; 768+ = vector search
+
+vault:
+  path: ~/.local/share/agentloop/vault
+```
 
 Change the vault location:
 
@@ -137,5 +268,5 @@ vault:
 ```
 
 <Aside type="caution">
-  If you change the vault path, existing sessions and memory files won't be migrated. Move the contents manually if needed.
+  If you change the vault path, existing sessions, profiles, conversation logs, and SQLite note databases won't be migrated. Move the vault directory contents manually if needed.
 </Aside>
