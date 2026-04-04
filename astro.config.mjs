@@ -117,13 +117,13 @@ export default defineConfig({
           ],
         },
         {
-          label: "Rust Client",
+          label: "ACP Client",
           badge: { text: "Library", variant: "success" },
           items: [
-            { label: "Overview", slug: "rust-client/overview" },
-            { label: "Setup", slug: "rust-client/setup" },
-            { label: "Zed Integration", slug: "rust-client/zed-integration" },
-            { label: "Event Handling", slug: "rust-client/event-handling" },
+            { label: "Overview", slug: "acp-client/overview" },
+            { label: "Setup", slug: "acp-client/setup" },
+            { label: "Event Handling", slug: "acp-client/event-handling" },
+            { label: "API Reference", slug: "acp-client/api-reference" },
           ],
         },
         {
@@ -138,6 +138,7 @@ export default defineConfig({
             },
             { label: "Message Flow", slug: "slack-bridge/message-flow" },
             { label: "HITL in Slack", slug: "slack-bridge/hitl-in-slack" },
+            { label: "AI Assistant", slug: "slack-bridge/assistant" },
             { label: "Slash Commands", slug: "slack-bridge/slash-commands" },
             { label: "Extending", slug: "slack-bridge/extending" },
           ],
