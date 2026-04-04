@@ -7,16 +7,32 @@ import { Aside } from '@astrojs/starlight/components';
 
 ## How It Looks
 
-When the agent encounters a risky operation, a Block Kit message appears in the thread:
+When the agent encounters a risky operation, an enriched Block Kit message appears in the thread:
 
 ```
-🔒 Tool Approval Required
+🔴 HIGH risk · 💻 Code Execution
 
 Tool: bash
+Reason: Executing shell command with elevated privileges
 Details: docker run -v ~/project:/app ubuntu:latest
+Whitelisted paths: /home/marco/travel-app
 
 [✅ Approve]  [❌ Deny]  [🛑 Abort Task]
 ```
+
+### Enriched HITL Display
+
+The approval prompt surfaces security metadata so reviewers can make informed decisions:
+
+| Field | Description |
+|---|---|
+| **Risk badge** | 🔴 HIGH · 🟡 MEDIUM · 🟢 LOW — derived from the injection guard risk level |
+| **Category icon** | 📂 File System · 💻 Code Execution · 🌐 Network · ⚙️ System · 🔧 Tool — based on tool category |
+| **Reason** | Human-readable explanation from the security policy (e.g. "Executing shell command with elevated privileges") |
+| **Structured input** | Tool arguments shown as labeled fields rather than a raw JSON blob |
+| **Whitelisted paths** | If the operation involves paths, any pre-approved paths are listed for context |
+
+The `buildHITLPrompt()` function in `blocks.ts` assembles all these fields from the `event.hitl_request` payload.
 
 ## How It Works
 
@@ -77,6 +93,41 @@ The original message is updated via `chat.update` to reflect the decision:
 ## Details Truncation
 
 HITL details are truncated to **2000 characters** in the Block Kit message to stay within Slack's limits. Block Kit section text has a **3000 character** maximum.
+
+## Auto-Approval
+
+Low and medium-risk tool calls can be auto-approved without user input when `auto_approve_non_high: true` is set in the bridge config:
+
+```yaml
+# bridge config (e.g. bridge.config.yaml or .env)
+HITL_AUTO_APPROVE_NON_HIGH=true
+```
+
+**How it works:**
+
+1. Bridge receives `event.hitl_request` with a risk level of `LOW` or `MEDIUM`
+2. Instead of posting interactive buttons, the bridge immediately sends `hitl.respond` with `decision: "approve"`
+3. A compact acknowledgment message is posted to the thread (no buttons):
+
+```
+✅ Auto-approved · 🟢 LOW risk · 📂 File System
+
+Tool: read
+```
+
+4. The `hitl_auto_approved` event is recorded in the session transcript for audit purposes
+
+**Tiered security model:**
+
+| Risk Level | `auto_approve_non_high: false` | `auto_approve_non_high: true` |
+|---|---|---|
+| 🔴 HIGH | Always requires manual approval | Always requires manual approval |
+| 🟡 MEDIUM | Requires manual approval | Auto-approved |
+| 🟢 LOW | Requires manual approval | Auto-approved |
+
+<Aside type="caution">
+  Auto-approval bypasses human review for MEDIUM and LOW risk operations. Only enable this if you trust the agent's risk classification and your security policy extension is correctly configured.
+</Aside>
 
 ## Timeout
 

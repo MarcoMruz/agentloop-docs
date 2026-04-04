@@ -1,0 +1,208 @@
+---
+title: Slack AI Assistant
+description: How the Slack Bridge integrates with Slack's AI Assistant surface — thread titles, suggested prompts, status updates, and streaming replies.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## What Is the Slack AI Assistant?
+
+Slack's **Agents and AI Apps** platform lets bots appear in the dedicated AI assistant sidebar and DM experience, with richer UX affordances than regular bots: thread titles, suggested prompts, per-tool status updates, and streaming text replies.
+
+The Slack Bridge implements the full AI assistant event surface on top of the existing AgentLoop task/event pipeline — no changes to the AgentLoop server are required.
+
+<Aside type="note">
+  The AI assistant surface is only visible in Slack workspaces on a paid plan with **Agents and AI Apps** enabled in the App Manager.
+</Aside>
+
+---
+
+## Prerequisites
+
+### 1. Enable Agents and AI Apps
+
+In your [Slack App configuration](https://api.slack.com/apps):
+
+1. Open your app → **Features → Agents & AI Apps**
+2. Toggle **Enable Agents & AI Apps** on
+3. Save changes and reinstall the app to your workspace
+
+### 2. Required OAuth Scopes
+
+Add these scopes in **OAuth & Permissions → Bot Token Scopes**:
+
+| Scope | Purpose |
+|-------|---------|
+| `assistant:write` | Set thread title, suggested prompts, and tool status |
+| `im:history` | Read DM history in the assistant thread |
+
+<Aside type="caution">
+  Without `assistant:write`, calls to `setTitle`, `setSuggestedPrompts`, and `setStatus` will return `missing_scope` errors. The bridge logs these and continues, but the assistant UI will appear broken to users.
+</Aside>
+
+---
+
+## Event Handling
+
+The bridge registers two Bolt event handlers for the assistant surface.
+
+### `assistant_thread_started`
+
+Fired when a user opens an assistant thread (new DM or new thread in the AI sidebar).
+
+```ts
+assistant.threadStarted(async ({ event, client, say, setTitle, setSuggestedPrompts }) => {
+  // Set the thread title shown in the sidebar
+  await setTitle("AgentLoop");
+
+  // Offer contextual suggested prompts
+  await setSuggestedPrompts({
+    title: "What can I help with?",
+    prompts: [
+      { title: "Explore codebase", message: "What is the overall architecture of this project?" },
+      { title: "Fix failing tests", message: "Run the tests and fix any failures." },
+      { title: "Review recent changes", message: "Summarise what changed in the last 5 commits." },
+    ],
+  });
+});
+```
+
+**Behaviour:**
+- Title is static (`"AgentLoop"`) — the bridge does not derive a dynamic title from the task.
+- Suggested prompts are rendered as clickable chips; clicking one sends the message text as if the user typed it.
+- Both calls are best-effort: failures are logged but do not abort the handler.
+
+---
+
+### `assistant_thread_context_changed`
+
+Fired when the user switches the context (e.g. changes the channel the assistant is scoped to). The bridge currently acknowledges this event without action — context is managed by the AgentLoop server's memory engine.
+
+---
+
+### `userMessage` (in assistant threads)
+
+Fired for every user message sent inside an assistant thread.
+
+```ts
+assistant.userMessage(async ({ event, client, say, setStatus }) => {
+  // Determine: new task vs. steer on active session
+  const threadTs = event.thread_ts ?? event.ts;
+  const existingSession = sessionMap.get(threadTs);
+
+  if (existingSession?.status === "running") {
+    // Steer the active session
+    await agentloop.steer(existingSession.sessionId, event.text);
+  } else {
+    // Start a new task
+    await setStatus("Starting…");
+    const { sessionId } = await agentloop.startTask(userId, event.text, workDir);
+    sessionMap.set(threadTs, { sessionId, status: "running" });
+    // Event loop takes over from here
+  }
+});
+```
+
+**Start vs. steer detection** uses the same `sessionMap` as regular DM handling. If the thread's `ts` is already mapped to an active session, the message becomes a `task.steer`; otherwise it becomes a `task.start`.
+
+---
+
+## Per-Tool Status Updates
+
+While the agent is running, the bridge calls `setStatus` for each `event.tool_use` to give the user live feedback in the assistant thread header:
+
+```ts
+onToolUse: (toolName, _input) => {
+  setStatus(`Running \`${toolName}\`…`);
+},
+```
+
+Status is overwritten with each new tool call and cleared automatically when the task completes or errors.
+
+**Example statuses the user sees:**
+```
+Running `bash`…
+Running `edit`…
+Running `read`…
+```
+
+<Aside type="tip">
+  `setStatus` calls are fire-and-forget in the bridge — a failure (e.g. rate limit) is logged but does not interrupt the agent event loop.
+</Aside>
+
+---
+
+## Text Streaming in Assistant Threads
+
+Text streaming inside assistant threads follows a slightly different path than regular DM threads:
+
+| Step | Mechanism |
+|------|-----------|
+| First flush (no prior message) | `say({ text, thread_ts })` — creates the message |
+| Subsequent flushes | `client.chat.update({ channel, ts, text })` — updates in-place |
+| Final flush on `event.done` | `chat.update` with complete output |
+
+The **1-second debounce** (`TEXT_FLUSH_INTERVAL_MS`) from regular DM handling applies here too — `event.text` chunks accumulate in `textChunks[]` and are flushed on a timer.
+
+```
+assistant_thread
+  ├─ setStatus("Running `bash`…")
+  ├─ [streamed text, updated every ~1s]
+  ├─ setStatus("Running `edit`…")
+  ├─ [streamed text continues]
+  └─ ✅ Done (tokens: 2800, tools: 4, duration: 9.1s)
+```
+
+---
+
+## Full Event Handling Matrix
+
+| AgentLoop Event | Bridge Action in Assistant Thread |
+|---|---|
+| `event.text` | Buffer + flush via `say` (first) / `chat.update` (subsequent) |
+| `event.tool_use` | `setStatus("Running \`toolName\`…")` |
+| `event.tool_result` | Not posted (result visible in streamed text) |
+| `event.hitl_request` | Block Kit message with Approve/Deny/Abort (same as regular DM) |
+| `event.hitl_auto_approved` | `setStatus("Auto-approved: \`toolName\`")` (brief, then overwritten) |
+| `event.done` | Final `chat.update` with output + stats; clear status |
+| `event.error` | Post error text to thread; clear status |
+
+<Aside type="note">
+  `event.hitl_auto_approved` is emitted by the AgentLoop server when a tool matches the auto-approve list in config. The bridge surfaces it as a transient status update rather than a full Block Kit message.
+</Aside>
+
+---
+
+## Required Slack App Manifest (excerpt)
+
+```yaml
+features:
+  assistant_view:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+
+oauth_config:
+  scopes:
+    bot:
+      - assistant:write
+      - im:history
+      - chat:write
+      - reactions:write
+      - files:write
+```
+
+See the full manifest in [Slack App Configuration](/slack-bridge/slack-app-configuration).
+
+---
+
+## Relationship to Regular DM Handling
+
+The AI assistant surface is **additive** — it does not replace the regular `message.im` handler. Both can be active simultaneously:
+
+| Surface | Entry point | Scopes needed |
+|---------|------------|---------------|
+| Regular DM | `message.im` event | `im:history`, `chat:write` |
+| AI assistant sidebar | `assistant.*` events | + `assistant:write` |
+
+If `assistant:write` is missing, the bridge degrades gracefully: messages still work, but `setTitle`/`setSuggestedPrompts`/`setStatus` calls fail silently.

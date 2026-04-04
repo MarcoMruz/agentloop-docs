@@ -1,0 +1,148 @@
+---
+title: ACP Client Setup
+description: Install, configure, and connect the agentloop-acp TypeScript client to the AgentLoop server.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Prerequisites
+
+- **Node.js** >= 20
+- **AgentLoop server** running and reachable at its Unix socket
+
+Verify the server is up:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+## Installation
+
+The client ships as part of `agentloop-slack` but can be copied into any TypeScript project. Copy `src/agentloop/client.ts` and `src/agentloop/types.ts` into your project and import from there, or consume the compiled `.d.ts` from the `dist/` folder.
+
+```bash
+# From the agentloop-slack repo
+git clone https://github.com/MarcoMruz/agentloop-slack.git
+cp agentloop-slack/src/agentloop/{client.ts,types.ts} src/agentloop/
+```
+
+The client has no runtime dependencies beyond Node.js built-ins (`node:net`, `node:events`).
+
+## Basic Connection
+
+```ts
+import { AgentLoopClient } from "./agentloop/client.js";
+
+const client = new AgentLoopClient(
+  "~/.local/share/agentloop/agentloop.sock"
+);
+
+await client.connect();
+console.log("Connected to AgentLoop server");
+```
+
+The `connect()` call resolves once the socket is open. If the server is unreachable it rejects; the client will then attempt to reconnect automatically on subsequent calls.
+
+## Configuration
+
+`AgentLoopClient` takes a single constructor argument — the socket path. Two constants control timing behaviour and can be changed by editing the source:
+
+| Constant | Default | Purpose |
+|---|---|---|
+| `REQUEST_TIMEOUT_MS` | `30_000` | Milliseconds before a pending request is rejected |
+| `RECONNECT_BASE_MS` | `1_000` | Initial reconnect delay |
+| `RECONNECT_MAX_MS` | `30_000` | Maximum reconnect delay (exponential backoff cap) |
+
+For most deployments the defaults are fine. Increase `REQUEST_TIMEOUT_MS` if you run long-latency first responses.
+
+## Health Check
+
+```ts
+const health = await client.healthCheck();
+// { status: "ok", activeSessions: 2 }
+console.log(`Server status: ${health.status}, sessions: ${health.activeSessions}`);
+```
+
+## Starting a Task
+
+```ts
+const result = await client.startTask(
+  "marco",           // userId — used for memory and session routing
+  "fix the failing tests in internal/bridge",
+  "/home/marco/dev/agentloop",  // optional workDir
+  "cli"              // optional source label
+);
+
+console.log(`Session started: ${result.sessionId}`);
+```
+
+`startTask` returns `{ sessionId, status }`. The session is immediately running on the server; events arrive via the EventEmitter.
+
+## Listening for Events
+
+```ts
+client.on("event.text", (params) => {
+  process.stdout.write(params.content);
+});
+
+client.on("event.tool_use", (params) => {
+  console.log(`\n⚙  ${params.toolName}`);
+});
+
+client.on("event.done", (params) => {
+  console.log(`\nDone — ${params.stats.toolCalls} tool calls, ${params.stats.duration}`);
+});
+
+client.on("event.error", (params) => {
+  console.error(`\nError: ${params.message}`);
+});
+```
+
+Events are scoped to `sessionId` in the params — filter when managing multiple concurrent sessions.
+
+## Steering and Aborting
+
+```ts
+// Redirect the agent mid-task
+await client.steerTask(sessionId, "focus only on the bridge package tests");
+
+// Stop the task immediately
+await client.abortTask(sessionId);
+```
+
+## HITL Responses
+
+When the server needs approval, it emits `event.hitl_request`. Send the user's decision back:
+
+```ts
+client.on("event.hitl_request", async (params) => {
+  // Show the user a prompt — this example auto-approves
+  const decision = await askUser(params.details, params.options);
+  await client.respondHITL(params.sessionId, params.requestId, decision);
+});
+```
+
+`decision` must be one of the strings in `params.options` (typically `"approve"`, `"deny"`, or `"abort"`).
+
+## Session Listing
+
+```ts
+// All sessions for a user
+const sessions = await client.listSessions("marco");
+
+// Only running sessions
+const running = await client.listSessions(undefined, "running");
+```
+
+## Disconnecting
+
+```ts
+await client.disconnect();
+```
+
+This cancels the reconnect timer, rejects all pending requests, and destroys the socket.
+
+<Aside type="note">
+  **Socket path expansion**: Node's `createConnection` does not expand `~`. Expand the home directory yourself before passing the path: `socketPath.replace("~", os.homedir())`.
+</Aside>
