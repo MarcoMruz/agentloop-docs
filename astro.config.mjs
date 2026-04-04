@@ -143,17 +143,7 @@ export default defineConfig({
             { label: "Extending", slug: "slack-bridge/extending" },
           ],
         },
-        {
-          label: "Zed Bridge",
-          badge: { text: "Companion", variant: "note" },
-          items: [
-            { label: "Overview", slug: "zed-bridge/overview" },
-            { label: "Setup", slug: "zed-bridge/setup" },
-            { label: "File References", slug: "zed-bridge/file-references" },
-            { label: "HITL in Zed", slug: "zed-bridge/hitl-in-zed" },
-            { label: "Configuration", slug: "zed-bridge/configuration" },
-          ],
-        },
+
         {
           label: "Reference",
           collapsed: true,
