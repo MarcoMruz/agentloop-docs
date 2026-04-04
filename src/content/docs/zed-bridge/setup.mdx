@@ -1,0 +1,135 @@
+---
+title: Zed Bridge Setup
+description: Install, build, and configure the AgentLoop ACP bridge for Zed.
+sidebar:
+  order: 2
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Prerequisites
+
+- **Rust** >= 1.70 (stable toolchain)
+- **Zed** >= 0.140 (ACP agent panel support)
+- **AgentLoop server** running and healthy
+
+Verify the server is up:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
+  socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+```
+
+## Step 1: Install Rust
+
+If Rust is not yet installed:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustc --version  # Should be 1.70+
+```
+
+## Step 2: Clone and Build
+
+```bash
+git clone https://github.com/MarcoMruz/agentloop-rs.git
+cd agentloop-rs
+
+# Build all crates in release mode
+cargo build --release
+
+# Install the ACP bridge binary to ~/.cargo/bin/
+cargo install --path crates/agentloop-acp-bridge
+```
+
+Verify the install:
+
+```bash
+agentloop-acp-bridge --help
+```
+
+## Step 3: Configure Zed
+
+Open `~/.config/zed/settings.json` and add the `agent_servers` block:
+
+```json
+{
+  "agent_servers": {
+    "AgentLoop": {
+      "type": "custom",
+      "command": "agentloop-acp-bridge",
+      "args": ["--socket-path", "~/.local/share/agentloop/agentloop.sock"],
+      "env": {}
+    }
+  }
+}
+```
+
+Save the file. Zed hot-reloads settings without a restart.
+
+<Aside type="note">
+  The `~` in `--socket-path` is expanded by the bridge itself (not the shell), since Zed spawns the binary directly without a shell. If expansion fails for any reason, use the full absolute path instead: `/home/yourname/.local/share/agentloop/agentloop.sock`.
+</Aside>
+
+## Step 4: Verify in Zed
+
+1. Open the **Agent panel** in Zed (`Cmd+Shift+A` or `Ctrl+Shift+A`)
+2. Select **AgentLoop** from the agent dropdown
+3. Type a prompt and hit Enter
+
+You should see streaming text responses appearing in the panel.
+
+## CLI Arguments Reference
+
+| Argument | Type | Default | Description |
+|---|---|---|---|
+| `--socket-path` | `PathBuf` | `~/.local/share/agentloop/agentloop.sock` | Path to the AgentLoop Unix socket |
+| `--path-map` | `LOCAL:REMOTE` | — | Map local paths to remote paths (for SSH/remote setups) |
+
+### Path Mapping (Remote Servers)
+
+If the AgentLoop server runs on a remote machine with a different filesystem layout, use `--path-map` to translate paths:
+
+```json
+{
+  "agent_servers": {
+    "AgentLoop": {
+      "type": "custom",
+      "command": "agentloop-acp-bridge",
+      "args": [
+        "--socket-path", "/run/user/1000/agentloop.sock",
+        "--path-map", "/Users/marco:/home/marco"
+      ]
+    }
+  }
+}
+```
+
+The bridge prepends the remote prefix when passing `cwd` to AgentLoop `task.start`, so the Go server sees paths it can resolve locally.
+
+## Step 5: Start AgentLoop Server on Boot
+
+Use PM2 or a systemd unit to keep the server alive:
+
+```bash
+# Via PM2
+pm2 start agentloop-server --name agentloop-server
+pm2 save
+pm2 startup
+```
+
+See the [Deployment Guide](/guides/deployment/) for full production setup.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| AgentLoop not listed in Zed agent panel | `settings.json` syntax error | Validate JSON at [jsonlint.com](https://jsonlint.com) |
+| "connect failed" error in Zed | Server not running | Start `agentloop-server` and verify socket exists |
+| "command not found: agentloop-acp-bridge" | Binary not on `$PATH` | Run `cargo install --path crates/agentloop-acp-bridge` or add `~/.cargo/bin` to PATH |
+| Socket path not expanding | Zed spawns binary without shell | Use absolute path in `--socket-path` |
+| Responses appear then stop | AgentLoop session limit reached | Increase `sessions.max_concurrent` in `agentloop.yaml` |
+
+<Aside type="tip">
+  Bridge logs (at `INFO` level) go to stderr. Zed typically captures subprocess stderr in its log files. Check **Zed → Help → Open Log File** to diagnose connection issues.
+</Aside>

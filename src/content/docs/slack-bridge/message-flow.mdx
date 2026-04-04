@@ -64,10 +64,28 @@ Each AgentLoop event becomes a specific Slack message:
 Text events are buffered to avoid Slack API spam:
 
 1. `event.text` chunks accumulate in a `textChunks[]` array
-2. A debounce timer flushes every **1 second** (`TEXT_FLUSH_INTERVAL_MS`)
+2. A flush timer fires every **1 second** (`TEXT_FLUSH_INTERVAL_MS = 1000`)
 3. First flush creates a new Slack message via `chat.postMessage`
-4. Subsequent flushes update the same message via `chat.update`
+4. Subsequent flushes update the same message in-place via `chat.update`
 5. On `event.done`: cancel timer, flush remaining text, post final result
+
+This produces a smooth streaming effect — the message grows as the agent responds, without hitting Slack's rate limits.
+
+## Thread Status Indicator
+
+While a session is active, the bridge sets a Slack thread typing indicator using the `setThreadStatus` API:
+
+```
+🤖 Agent is thinking...   (shown in thread input area)
+```
+
+| Stage | Thread status |
+|---|---|
+| Task started | Status set: "Agent is thinking…" |
+| Task done / error / aborted | Status cleared |
+| Waiting for HITL | Status cleared (buttons take over) |
+
+This gives users immediate feedback that the agent is running, before the first text chunk arrives.
 
 ## Reaction Lifecycle
 

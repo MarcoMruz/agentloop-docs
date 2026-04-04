@@ -56,6 +56,18 @@ graph LR
 - **Bridge is easy to deploy** — Simple Node.js process, few dependencies
 - **Bridge is safe** — It can't make agent decisions, only relay user input
 
+## Key Features
+
+| Feature | Description |
+|---|---|
+| **Text streaming** | Agent text chunks buffered and flushed every ~1s via `chat.update` |
+| **Thread status** | Slack typing indicator set via `setThreadStatus` while agent is running |
+| **HITL approval** | Block Kit buttons (Approve / Deny / Abort Task) posted per risk operation |
+| **Auto-approval** | Low/medium-risk tool calls auto-approved when `auto_approve_non_high: true`; bridge posts a compact acknowledgment message instead of waiting for input |
+| **Enriched HITL display** | Risk badge (🔴🟡🟢), category icon (📂💻🌐⚙️🔧), reason field, and structured input shown in the approval prompt |
+| **Assistant app** | Works as a Slack Assistant with structured thread context for DM interactions |
+| **Session abort** | `/abort` and `/sessions` both provide per-session Abort buttons; `/sessions` lists all active sessions with an inline Abort button on each row |
+
 ## Message Translation
 
 | Slack Event | AgentLoop RPC Call |
@@ -63,7 +75,8 @@ graph LR
 | DM or @mention | `task.start` |
 | Thread reply to active session | `task.steer` |
 | `/abort` command | `task.abort` |
-| HITL button click (Approve/Deny) | `hitl.respond` |
+| HITL button click (Approve/Deny/Abort) | `hitl.respond` / `task.abort` |
+| Auto-approved tool call | (no user input required; `hitl_auto_approved` event logged) |
 | AgentLoop events | Slack messages in thread |
 
 <Aside type="note">

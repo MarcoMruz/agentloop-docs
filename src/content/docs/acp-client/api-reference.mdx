@@ -1,0 +1,242 @@
+---
+title: API Reference
+description: Full type and method reference for the agentloop-acp TypeScript client.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## `AgentLoopClient`
+
+```ts
+import { AgentLoopClient } from "./agentloop/client.js";
+
+const client = new AgentLoopClient(socketPath: string);
+```
+
+Extends `EventEmitter`. Thread-safe for concurrent `request()` calls; each call gets a unique `id` and independent timeout.
+
+---
+
+### Constructor
+
+```ts
+new AgentLoopClient(socketPath: string)
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `socketPath` | `string` | Absolute path to the AgentLoop Unix socket. `~` is **not** expanded — use `os.homedir()` if needed. |
+
+---
+
+### Methods
+
+#### `connect(): Promise<void>`
+
+Opens the Unix socket connection. Resolves when connected, rejects on error. Safe to `await` at startup.
+
+#### `disconnect(): Promise<void>`
+
+Gracefully closes the connection: cancels the reconnect timer, rejects all pending requests with `"Client disconnecting"`, and destroys the socket.
+
+#### `request<T>(method, params): Promise<T>`
+
+Low-level JSON-RPC 2.0 request. Rejects after `REQUEST_TIMEOUT_MS` (default 30 s) if no response arrives.
+
+```ts
+const result = await client.request<HealthCheckResult>("health.check", {});
+```
+
+---
+
+### Convenience Methods
+
+#### `startTask(userId, text, workDir?, source?): Promise<TaskStartResult>`
+
+```ts
+const { sessionId, status } = await client.startTask(
+  "marco",
+  "fix the test failures",
+  "/home/marco/dev/agentloop",
+  "cli"
+);
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `userId` | `string` | — | AgentLoop user ID (memory + session routing) |
+| `text` | `string` | — | Task description |
+| `workDir` | `string?` | — | Working directory for the agent subprocess |
+| `source` | `string` | `"slack"` | Source label stored in the session vault entry |
+
+Returns `TaskStartResult`:
+```ts
+interface TaskStartResult {
+  sessionId: string;  // "sess-{uuid8}"
+  status: string;     // "starting"
+}
+```
+
+#### `steerTask(sessionId, text): Promise<OkResult>`
+
+Redirect a running task mid-execution. The agent receives `text` as a steering prompt without starting a new session.
+
+#### `abortTask(sessionId): Promise<OkResult>`
+
+Stop a running task immediately. The session transitions to `aborted`.
+
+#### `respondHITL(sessionId, requestId, decision): Promise<OkResult>`
+
+Send the user's HITL decision. `decision` must be one of the strings in `event.hitl_request`'s `options` array (e.g. `"approve"`, `"deny"`, `"abort"`).
+
+#### `listSessions(userId?, status?): Promise<SessionInfo[]>`
+
+```ts
+interface SessionInfo {
+  id: string;
+  task: string;
+  state: string;
+  userId?: string;
+  createdAt?: string;
+}
+```
+
+Pass `undefined` for either parameter to omit that filter.
+
+#### `healthCheck(): Promise<HealthCheckResult>`
+
+```ts
+interface HealthCheckResult {
+  status: string;        // "ok"
+  activeSessions: number;
+}
+```
+
+---
+
+## Type Reference
+
+### Wire Types
+
+```ts
+interface RPCRequest {
+  jsonrpc: "2.0";
+  id: number;
+  method: string;
+  params: Record<string, unknown>;
+}
+
+interface RPCResponse {
+  jsonrpc: "2.0";
+  id?: number;
+  result?: unknown;
+  error?: { code: number; message: string };
+}
+
+interface RPCNotification {
+  jsonrpc: "2.0";
+  method: string;
+  params: Record<string, unknown>;
+}
+```
+
+### Event Param Types
+
+```ts
+interface TextEventParams {
+  sessionId: string;
+  content: string;
+}
+
+interface ToolUseEventParams {
+  sessionId: string;
+  toolName: string;
+  input: unknown;
+}
+
+interface ToolResultEventParams {
+  sessionId: string;
+  toolName: string;
+  output: string;
+  success: boolean;
+}
+
+interface HITLRequestEventParams {
+  sessionId: string;
+  requestId: string;
+  toolName: string;
+  details: string;
+  options: string[];
+  // optional enriched fields from Go security layer:
+  command?: string;
+  workDir?: string;
+  rule?: string;
+  method?: string;
+  toolCategory?: "file" | "bash" | "network" | "process" | "other";
+  filePath?: string;
+  whitelistedPaths?: string[];
+  structuredInput?: Record<string, unknown>;
+  riskLevel?: "low" | "medium" | "high";
+  reason?: string;
+}
+
+interface DoneEventParams {
+  sessionId: string;
+  output: string;
+  stats: { tokens: number; toolCalls: number; duration: string };
+}
+
+interface ErrorEventParams {
+  sessionId: string;
+  message: string;
+}
+
+interface SessionSavedEventParams {
+  sessionId: string;
+}
+```
+
+### Discriminated Event Union
+
+```ts
+type AgentEvent =
+  | { method: "event.text"; params: TextEventParams }
+  | { method: "event.tool_use"; params: ToolUseEventParams }
+  | { method: "event.tool_result"; params: ToolResultEventParams }
+  | { method: "event.hitl_request"; params: HITLRequestEventParams }
+  | { method: "event.hitl_auto_approved"; params: HITLAutoApprovedEventParams }
+  | { method: "event.done"; params: DoneEventParams }
+  | { method: "event.error"; params: ErrorEventParams }
+  | { method: "event.session_saved"; params: SessionSavedEventParams };
+```
+
+Use `AgentEvent` when subscribing to the generic `"event"` channel:
+
+```ts
+client.on("event", (notification: AgentEvent) => {
+  if (notification.method === "event.done") {
+    console.log(notification.params.stats.toolCalls);
+  }
+});
+```
+
+---
+
+## Events (EventEmitter)
+
+| Event name | Params type | When emitted |
+|---|---|---|
+| `"event"` | `RPCNotification` | Every server notification |
+| `"event.text"` | `TextEventParams` | Streaming text chunk |
+| `"event.tool_use"` | `ToolUseEventParams` | Tool invocation started |
+| `"event.tool_result"` | `ToolResultEventParams` | Tool finished |
+| `"event.hitl_request"` | `HITLRequestEventParams` | Approval needed |
+| `"event.hitl_auto_approved"` | `HITLAutoApprovedEventParams` | Auto-approved by server policy |
+| `"event.done"` | `DoneEventParams` | Task completed successfully |
+| `"event.error"` | `ErrorEventParams` | Task failed |
+| `"event.session_saved"` | `SessionSavedEventParams` | Session persisted to vault |
+| `"reconnected"` | _(none)_ | Socket reconnected after drop |
+
+<Aside type="note">
+  All event params are typed in `src/agentloop/types.ts`. Import them directly for full IDE autocomplete.
+</Aside>
