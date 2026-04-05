@@ -1,91 +1,97 @@
 ---
-title: ACP Thin Client Overview
-description: What the agentloop-acp TypeScript client is, its philosophy, and how it communicates with the AgentLoop server.
+title: ACP Client Overview
+description: What agentloop-acp is, how it bridges Zed IDE to the AgentLoop Go server, and what the AgentLoopClient provides.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-## What Is the ACP Thin Client?
+## What Is agentloop-acp?
 
-`agentloop-acp` is a **thin TypeScript client** for communicating with the AgentLoop Go server over a Unix socket using the JSON-RPC 2.0 protocol. It provides a typed, event-driven API for starting tasks, handling streaming agent events, and responding to HITL approval requests.
-
-The client is used by the [Slack Bridge](/slack-bridge/overview/) and can be embedded in any Node.js application that needs to talk to AgentLoop.
-
-<Aside type="caution">
-  **Scope**: `agentloop-acp` is a communication library only. All intelligence — memory, context, session management, HITL gating — lives in the AgentLoop Go server. The client just sends and receives JSON-RPC messages.
+<Aside type="tip">
+  The full source code is available on GitHub: [MarcoMruz/agentloop-acp](https://github.com/MarcoMruz/agentloop-acp)
 </Aside>
 
-## Philosophy: Zero Intelligence in the Client
+`agentloop-acp` is a **TypeScript ACP bridge** that connects [Zed IDE](https://zed.dev) to the AgentLoop Go server. Zed communicates with it over the [Agent Communication Protocol (ACP)](https://github.com/agentclientprotocol) via stdin/stdout; internally it talks to the AgentLoop server over a Unix socket using JSON-RPC 2.0.
 
-All agent logic lives in the Go server. The client is a thin relay:
+The package has two main layers:
+
+- **`AgentLoopAgent`** — implements `acp.Agent` from `@agentclientprotocol/sdk`. Handles sessions, prompt processing, tool call display, and HITL permission dialogs in Zed.
+- **`AgentLoopClient`** — thin JSON-RPC client that sends requests to the Go server and streams back events.
 
 ```mermaid
 graph LR
-    subgraph "Your Application"
-        App["Application Code"]
-        Client["AgentLoopClient"]
+    subgraph "Zed IDE"
+        ZedUI["Editor / Chat Panel"]
+    end
+
+    subgraph "agentloop-acp (Node.js)"
+        Agent["AgentLoopAgent\n(ACP handler)"]
+        Client["AgentLoopClient\n(JSON-RPC)"]
     end
 
     subgraph "AgentLoop Server (Go)"
         Intelligence["Memory, Sessions, HITL, Vault, Skills, Pi"]
     end
 
-    App -->|"startTask / steerTask / etc."| Client
-    Client -->|"Unix Socket<br/>(JSON-RPC 2.0)"| Intelligence
+    ZedUI -->|"ACP (stdin/stdout\nndjson)"| Agent
+    Agent -->|"AgentLoopClient"| Client
+    Client -->|"Unix Socket\n(JSON-RPC 2.0)"| Intelligence
     Intelligence -->|"event.text / event.done / etc."| Client
-    Client -->|"EventEmitter events"| App
+    Client -->|"EventEmitter"| Agent
+    Agent -->|"sessionUpdate /\nrequestPermission"| ZedUI
 ```
 
-## What the Client Provides vs Doesn't
+<Aside type="caution">
+  **Scope**: `agentloop-acp` is a transport bridge only. All intelligence — memory, context, session management, HITL gating — lives in the AgentLoop Go server. The bridge just translates between ACP and the AgentLoop JSON-RPC API.
+</Aside>
 
-| Client Provides | Client Does NOT Provide |
+## Philosophy: Zero Intelligence in the Bridge
+
+All agent logic lives in the Go server. The ACP bridge is deliberately thin and stateless:
+
+| Bridge Owns | Bridge Does NOT Own |
 |---|---|
-| Unix socket connection management | Agent logic or execution |
-| JSON-RPC 2.0 protocol framing | Memory or context management |
-| Typed convenience methods (startTask, steerTask, etc.) | Session lifecycle decisions |
-| EventEmitter-based event streaming | HITL decision making (only relays) |
-| Automatic reconnection with exponential backoff | Prompt building or caching |
-| Per-request timeout with rejection | Skills or tool management |
+| ACP protocol framing (ndjson stdin/stdout) | Agent logic or execution |
+| Unix socket connection to Go server | Memory or context management |
+| Session history persistence (crash safety) | Session lifecycle decisions |
+| Tool call display formatting for Zed | HITL decision making (only relays) |
+| Prompt text extraction + file link embedding | Skills or tool management |
+| HITL permission dialogs in Zed | Prompt caching or context assembly |
 
 ## Protocol Compatibility
 
-The client maps directly to the AgentLoop server's JSON-RPC 2.0 API:
+`AgentLoopClient` maps directly to the AgentLoop server's JSON-RPC 2.0 API:
 
 | Server Method | Client Method | Purpose |
 |---|---|---|
 | `task.start` | `startTask()` | Begin a new agent task |
-| `task.steer` | `steerTask()` | Redirect a running task mid-flight |
 | `task.abort` | `abortTask()` | Stop the current task |
-| `hitl.respond` | `respondHITL()` | Approve/deny/abort a HITL request |
-| `session.list` | `listSessions()` | List sessions for a user or status |
-| `health.check` | `healthCheck()` | Server liveness and session count |
+| `hitl.respond` | `respondHitl()` | Approve/deny/abort a HITL request |
+| `health.check` | `healthCheck()` | Server liveness check |
 
 ## Event Streaming
 
-The server pushes events as newline-delimited JSON notifications. `AgentLoopClient` extends `EventEmitter` and re-emits each event by method name:
+The server pushes events as newline-delimited JSON notifications. `AgentLoopClient` extends `EventEmitter` and re-emits each event on the `"event"` channel with a discriminated `AgentEvent` object:
 
-| Server Notification | EventEmitter event | Params type |
+| Server Notification | `AgentEvent.type` | Key Fields |
 |---|---|---|
-| `event.text` | `"event.text"` | `TextEventParams` |
-| `event.tool_use` | `"event.tool_use"` | `ToolUseEventParams` |
-| `event.tool_result` | `"event.tool_result"` | `ToolResultEventParams` |
-| `event.hitl_request` | `"event.hitl_request"` | `HITLRequestEventParams` |
-| `event.done` | `"event.done"` | `DoneEventParams` |
-| `event.error` | `"event.error"` | `ErrorEventParams` |
-| `event.session_saved` | `"event.session_saved"` | `SessionSavedEventParams` |
+| `event.text` | `"text"` | `content` |
+| `event.tool_use` | `"tool_use"` | `toolName`, `input` |
+| `event.tool_result` | `"tool_result"` | `toolName`, `output`, `success` |
+| `event.hitl_request` | `"hitl_request"` | `requestId`, `toolName`, `details`, `options`, `riskLevel` |
+| `event.hitl_auto_approved` | `"hitl_auto_approved"` | `requestId`, `toolName`, `riskLevel`, `rule` |
+| `event.done` | `"done"` | `finalOutput`, `stats` |
+| `event.error` | `"error"` | `message` |
+| `event.session_saved` | `"session_saved"` | _(none beyond sessionId)_ |
 
-All events are also emitted on the generic `"event"` channel with the full `RPCNotification` envelope.
+## Session Persistence
 
-## Reconnection
+`AgentLoopAgent` maintains a conversation history per ACP session and persists it to disk at `~/.local/share/agentloop/acp-sessions/<sessionId>.json` after each turn. This allows Zed to resume sessions across restarts.
 
-The client reconnects automatically when the socket closes unexpectedly. Reconnect delay starts at 1 second and doubles up to 30 seconds. Pending requests are rejected with `"Socket closed"` on disconnect; callers must re-submit tasks after reconnection.
+## Connection Lifecycle
 
-```ts
-client.on("reconnected", () => {
-  console.log("Back online — re-submit pending tasks if needed");
-});
-```
+`AgentLoopClient` creates a **new connection per prompt** — it connects, starts a task, streams events until `event.done` or `event.error`, then closes. There is no persistent long-lived connection from the bridge to the Go server.
 
 <Aside type="note">
-  Call `client.disconnect()` before process exit to drain pending requests, cancel the reconnect timer, and destroy the socket cleanly.
+  The connection-per-prompt model keeps the bridge simple and stateless. If the server restarts mid-task, the error event surfaces in Zed and the user can retry.
 </Aside>

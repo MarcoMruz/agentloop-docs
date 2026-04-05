@@ -1,6 +1,6 @@
 ---
 title: API Reference
-description: Full type and method reference for the agentloop-acp TypeScript client.
+description: Full type and method reference for AgentLoopClient and AgentLoopAgent in agentloop-acp.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -8,24 +8,47 @@ import { Aside } from '@astrojs/starlight/components';
 ## `AgentLoopClient`
 
 ```ts
-import { AgentLoopClient } from "./agentloop/client.js";
+import { AgentLoopClient, loadConfig } from "./agentloop-client.js";
 
-const client = new AgentLoopClient(socketPath: string);
+const config = loadConfig(); // or loadConfig("/custom/path.sock")
+const client = new AgentLoopClient(config);
+await client.connect();
 ```
 
-Extends `EventEmitter`. Thread-safe for concurrent `request()` calls; each call gets a unique `id` and independent timeout.
+Extends `EventEmitter`. Creates a new socket connection per use (connect → startTask → stream events → close).
+
+---
+
+### `loadConfig(socketPathOverride?)`
+
+```ts
+function loadConfig(socketPathOverride?: string): AgentLoopConfig
+```
+
+Reads server settings from `~/.config/agentloop/agentloop.yaml`. Falls back to defaults if the file is absent or the key is missing. Pass `socketPathOverride` to ignore the config file's socket path.
+
+Returns an `AgentLoopConfig`:
+
+```ts
+interface AgentLoopConfig {
+  socketPath: string;   // default: ~/.local/share/agentloop/agentloop.sock
+  requestTimeout: number; // default: 30000 ms
+}
+```
+
+`~/` in `socketPathOverride` is expanded automatically.
 
 ---
 
 ### Constructor
 
 ```ts
-new AgentLoopClient(socketPath: string)
+new AgentLoopClient(config: AgentLoopConfig)
 ```
 
 | Parameter | Type | Description |
 |---|---|---|
-| `socketPath` | `string` | Absolute path to the AgentLoop Unix socket. `~` is **not** expanded — use `os.homedir()` if needed. |
+| `config` | `AgentLoopConfig` | Socket path and timeout settings |
 
 ---
 
@@ -33,210 +56,224 @@ new AgentLoopClient(socketPath: string)
 
 #### `connect(): Promise<void>`
 
-Opens the Unix socket connection. Resolves when connected, rejects on error. Safe to `await` at startup.
+Opens the Unix socket connection. Resolves when the socket is ready, rejects on error. Call this before any other method.
 
-#### `disconnect(): Promise<void>`
+#### `close(): Promise<void>`
 
-Gracefully closes the connection: cancels the reconnect timer, rejects all pending requests with `"Client disconnecting"`, and destroys the socket.
+Closes the connection: rejects all pending requests with `"Connection closed"`, destroys the readline interface, and destroys the socket.
 
-#### `request<T>(method, params): Promise<T>`
+#### `startTask(userId, text, workDir, source): Promise<string>`
 
-Low-level JSON-RPC 2.0 request. Rejects after `REQUEST_TIMEOUT_MS` (default 30 s) if no response arrives.
-
-```ts
-const result = await client.request<HealthCheckResult>("health.check", {});
-```
-
----
-
-### Convenience Methods
-
-#### `startTask(userId, text, workDir?, source?): Promise<TaskStartResult>`
+Sends `task.start` to the server and returns the assigned AgentLoop session ID.
 
 ```ts
-const { sessionId, status } = await client.startTask(
-  "marco",
-  "fix the test failures",
-  "/home/marco/dev/agentloop",
-  "cli"
+const alSessionId = await client.startTask(
+  process.env.USER || "user",  // userId
+  fullPrompt,                   // text — full conversation prompt
+  state.cwd,                    // workDir — project root
+  "zed-acp"                     // source label stored in vault
 );
+// alSessionId: "sess-xxxxxxxx"
 ```
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `userId` | `string` | — | AgentLoop user ID (memory + session routing) |
-| `text` | `string` | — | Task description |
-| `workDir` | `string?` | — | Working directory for the agent subprocess |
-| `source` | `string` | `"slack"` | Source label stored in the session vault entry |
+| Parameter | Type | Description |
+|---|---|---|
+| `userId` | `string` | AgentLoop user ID (memory + session routing) |
+| `text` | `string` | Task description or full conversation prompt |
+| `workDir` | `string \| undefined` | Working directory for the agent subprocess |
+| `source` | `string` | Source label stored in the session vault entry |
 
-Returns `TaskStartResult`:
-```ts
-interface TaskStartResult {
-  sessionId: string;  // "sess-{uuid8}"
-  status: string;     // "starting"
-}
-```
+Returns a `string` — the AgentLoop session ID (e.g. `"sess-a1b2c3d4"`).
 
-#### `steerTask(sessionId, text): Promise<OkResult>`
+#### `abortTask(sessionId): Promise<void>`
 
-Redirect a running task mid-execution. The agent receives `text` as a steering prompt without starting a new session.
-
-#### `abortTask(sessionId): Promise<OkResult>`
-
-Stop a running task immediately. The session transitions to `aborted`.
-
-#### `respondHITL(sessionId, requestId, decision): Promise<OkResult>`
-
-Send the user's HITL decision. `decision` must be one of the strings in `event.hitl_request`'s `options` array (e.g. `"approve"`, `"deny"`, `"abort"`).
-
-#### `listSessions(userId?, status?): Promise<SessionInfo[]>`
+Sends `task.abort`. Stops the running task; the session transitions to `aborted`.
 
 ```ts
-interface SessionInfo {
-  id: string;
-  task: string;
-  state: string;
-  userId?: string;
-  createdAt?: string;
-}
+await client.abortTask(alSessionId);
 ```
 
-Pass `undefined` for either parameter to omit that filter.
+#### `respondHitl(sessionId, requestId, decision): Promise<void>`
 
-#### `healthCheck(): Promise<HealthCheckResult>`
+Sends the user's HITL decision to the server.
 
 ```ts
-interface HealthCheckResult {
-  status: string;        // "ok"
-  activeSessions: number;
-}
+await client.respondHitl(alSessionId, event.requestId, decision);
 ```
+
+| Parameter | Type | Values |
+|---|---|---|
+| `sessionId` | `string` | AgentLoop session ID |
+| `requestId` | `string` | `event.requestId` from the `hitl_request` event |
+| `decision` | `HITLDecision` | `"approve"` \| `"deny"` \| `"abort"` |
+
+#### `healthCheck(): Promise<unknown>`
+
+Sends `health.check` and returns the raw result object (`{ status: "ok", activeSessions: number }`).
 
 ---
 
-## Type Reference
+## `AgentEvent` Type
 
-### Wire Types
-
-```ts
-interface RPCRequest {
-  jsonrpc: "2.0";
-  id: number;
-  method: string;
-  params: Record<string, unknown>;
-}
-
-interface RPCResponse {
-  jsonrpc: "2.0";
-  id?: number;
-  result?: unknown;
-  error?: { code: number; message: string };
-}
-
-interface RPCNotification {
-  jsonrpc: "2.0";
-  method: string;
-  params: Record<string, unknown>;
-}
-```
-
-### Event Param Types
+All server notifications are parsed into a single `AgentEvent` object emitted on the `"event"` channel. Use the `type` field as the discriminator.
 
 ```ts
-interface TextEventParams {
+interface AgentEvent {
+  type: "text" | "tool_use" | "tool_result" | "hitl_request"
+      | "hitl_auto_approved" | "done" | "error" | "session_saved";
   sessionId: string;
-  content: string;
-}
 
-interface ToolUseEventParams {
-  sessionId: string;
-  toolName: string;
-  input: unknown;
-}
+  // type: "text"
+  content?: string;
 
-interface ToolResultEventParams {
-  sessionId: string;
-  toolName: string;
-  output: string;
-  success: boolean;
-}
+  // type: "tool_use"
+  toolName?: string;
+  input?: unknown;
 
-interface HITLRequestEventParams {
-  sessionId: string;
-  requestId: string;
-  toolName: string;
-  details: string;
-  options: string[];
-  // optional enriched fields from Go security layer:
+  // type: "tool_result"
+  // toolName, plus:
+  output?: string;
+  success?: boolean;
+
+  // type: "hitl_request"
+  // toolName, plus:
+  requestId?: string;
+  details?: string;
+  options?: string[];
   command?: string;
   workDir?: string;
   rule?: string;
   method?: string;
-  toolCategory?: "file" | "bash" | "network" | "process" | "other";
+  toolCategory?: string;
   filePath?: string;
-  whitelistedPaths?: string[];
-  structuredInput?: Record<string, unknown>;
-  riskLevel?: "low" | "medium" | "high";
+  riskLevel?: string;
   reason?: string;
+
+  // type: "hitl_auto_approved"
+  // requestId, toolName, riskLevel, command, rule
+
+  // type: "done"
+  finalOutput?: string;
+  stats?: TaskStats;
+
+  // type: "error"
+  message?: string;
 }
 
-interface DoneEventParams {
-  sessionId: string;
-  output: string;
-  stats: { tokens: number; toolCalls: number; duration: string };
+interface TaskStats {
+  duration_ms: number;
+  tool_calls: number;
+  tokens_used?: number;
+  hitl_requests: number;
 }
 
-interface ErrorEventParams {
-  sessionId: string;
-  message: string;
-}
-
-interface SessionSavedEventParams {
-  sessionId: string;
-}
+type HITLDecision = "approve" | "deny" | "abort";
 ```
 
-### Discriminated Event Union
+### Subscribing
 
 ```ts
-type AgentEvent =
-  | { method: "event.text"; params: TextEventParams }
-  | { method: "event.tool_use"; params: ToolUseEventParams }
-  | { method: "event.tool_result"; params: ToolResultEventParams }
-  | { method: "event.hitl_request"; params: HITLRequestEventParams }
-  | { method: "event.hitl_auto_approved"; params: HITLAutoApprovedEventParams }
-  | { method: "event.done"; params: DoneEventParams }
-  | { method: "event.error"; params: ErrorEventParams }
-  | { method: "event.session_saved"; params: SessionSavedEventParams };
-```
-
-Use `AgentEvent` when subscribing to the generic `"event"` channel:
-
-```ts
-client.on("event", (notification: AgentEvent) => {
-  if (notification.method === "event.done") {
-    console.log(notification.params.stats.toolCalls);
+client.on("event", (event: AgentEvent) => {
+  if (event.type === "text") {
+    process.stdout.write(event.content ?? "");
+  } else if (event.type === "done") {
+    console.log(`Done — ${event.stats?.tool_calls} tool calls`);
+  } else if (event.type === "error") {
+    console.error(`Error: ${event.message}`);
   }
 });
 ```
 
 ---
 
-## Events (EventEmitter)
+## `AgentLoopAgent`
 
-| Event name | Params type | When emitted |
+`AgentLoopAgent` implements `acp.Agent` from `@agentclientprotocol/sdk`. It is constructed by the ACP connection factory in `index.ts` and is not typically instantiated directly.
+
+```ts
+import { AgentLoopAgent } from "./agent.js";
+
+const agent = new AgentLoopAgent(connection, config);
+```
+
+### ACP Methods
+
+| Method | ACP Type | Description |
 |---|---|---|
-| `"event"` | `RPCNotification` | Every server notification |
-| `"event.text"` | `TextEventParams` | Streaming text chunk |
-| `"event.tool_use"` | `ToolUseEventParams` | Tool invocation started |
-| `"event.tool_result"` | `ToolResultEventParams` | Tool finished |
-| `"event.hitl_request"` | `HITLRequestEventParams` | Approval needed |
-| `"event.hitl_auto_approved"` | `HITLAutoApprovedEventParams` | Auto-approved by server policy |
-| `"event.done"` | `DoneEventParams` | Task completed successfully |
-| `"event.error"` | `ErrorEventParams` | Task failed |
-| `"event.session_saved"` | `SessionSavedEventParams` | Session persisted to vault |
-| `"reconnected"` | _(none)_ | Socket reconnected after drop |
+| `initialize(params)` | `acp.InitializeRequest` → `acp.InitializeResponse` | Declares ACP capabilities and agent metadata |
+| `newSession(params)` | `acp.NewSessionRequest` → `acp.NewSessionResponse` | Creates a session state entry; returns a new `sessionId` |
+| `loadSession(params)` | `acp.LoadSessionRequest` → `acp.LoadSessionResponse` | Loads or restores session history from disk |
+| `authenticate(params)` | `acp.AuthenticateRequest` → `acp.AuthenticateResponse` | No-op (returns `{}`) |
+| `setSessionMode(params)` | `acp.SetSessionModeRequest` → `acp.SetSessionModeResponse` | No-op (returns `{}`) |
+| `cancel(params)` | `acp.CancelNotification` → `void` | Calls `abortTask` on the active client |
+| `prompt(params)` | `acp.PromptRequest` → `acp.PromptResponse` | Main prompt handler — connects to server, starts task, streams events |
+
+### Capabilities
+
+The agent advertises:
+
+```ts
+agentCapabilities: {
+  loadSession: true,
+  promptCapabilities: {
+    image: false,
+    audio: false,
+    embeddedContext: true,
+  },
+}
+```
+
+`embeddedContext: true` means Zed can pass `resource_link` and `resource` blocks alongside text in the prompt, which the agent processes via `extractPromptText`.
+
+---
+
+## Prompt Processing (`extractPromptText`)
+
+```ts
+import { extractPromptText } from "./prompt.js";
+
+const text = extractPromptText(params.prompt, state.cwd);
+```
+
+Converts ACP prompt content blocks to a plain string suitable for the AgentLoop server. Supports:
+
+- **`text` blocks** — concatenated as-is
+- **`resource_link` blocks** — converted to `[name] /absolute/path` references
+- **`resource` blocks** — same as resource_link
+- **Markdown file links** — `[description](relative/path)` in text blocks triggers automatic file embedding (up to 10 files, 100 KB each, 1000 lines each)
+
+When context blocks or markdown file links are present the output is wrapped in `<user_message>` / `<attached_context>` XML. For example, a prompt referencing `[auth.ts](src/auth.ts)` becomes:
+
+```
+<user_message>
+Fix the bug in [auth.ts](src/auth.ts)
+</user_message>
+
+<attached_context>
+[auth.ts] /project/src/auth.ts
+// (file content embedded here)
+</attached_context>
+```
+
+---
+
+## JSON-RPC Wire Format
+
+The client sends and receives newline-delimited JSON:
+
+```ts
+// Request (client → server)
+{ "jsonrpc": "2.0", "id": 1, "method": "task.start", "params": { ... } }
+
+// Response (server → client)
+{ "jsonrpc": "2.0", "id": 1, "result": { "sessionId": "sess-a1b2c3d4" } }
+
+// Notification (server → client, no id)
+{ "jsonrpc": "2.0", "method": "event.text", "params": { "sessionId": "sess-a1b2c3d4", "content": "Hello" } }
+```
+
+Requests time out after `config.requestTimeout` (default 30 s) with a `Request <method> timed out` error.
 
 <Aside type="note">
-  All event params are typed in `src/agentloop/types.ts`. Import them directly for full IDE autocomplete.
+  The request ID counter (`nextId`) is per-`AgentLoopClient` instance. Since `AgentLoopAgent` creates a new client per prompt, IDs always start at 1.
 </Aside>

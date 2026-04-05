@@ -1,6 +1,6 @@
 ---
 title: ACP Client Setup
-description: Install, configure, and connect the agentloop-acp TypeScript client to the AgentLoop server.
+description: Install, build, configure, and connect agentloop-acp to Zed IDE and the AgentLoop server.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -8,141 +8,136 @@ import { Aside } from '@astrojs/starlight/components';
 ## Prerequisites
 
 - **Node.js** >= 20
-- **AgentLoop server** running and reachable at its Unix socket
+- **AgentLoop server** running and reachable at its Unix socket (default: `~/.local/share/agentloop/agentloop.sock`)
+- **Zed IDE** >= 0.150 (with ACP extension support)
 
-Verify the server is up:
+Verify the AgentLoop server is up before proceeding:
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"health.check","params":{}}' | \
   socat - UNIX-CONNECT:~/.local/share/agentloop/agentloop.sock
+# Expected: {"jsonrpc":"2.0","id":1,"result":{"status":"ok","activeSessions":0}}
 ```
 
 ## Installation
 
-The client ships as part of `agentloop-slack` but can be copied into any TypeScript project. Copy `src/agentloop/client.ts` and `src/agentloop/types.ts` into your project and import from there, or consume the compiled `.d.ts` from the `dist/` folder.
+Clone the [agentloop-acp](https://github.com/MarcoMruz/agentloop-acp) repository and install dependencies:
 
 ```bash
-# From the agentloop-slack repo
-git clone https://github.com/MarcoMruz/agentloop-slack.git
-cp agentloop-slack/src/agentloop/{client.ts,types.ts} src/agentloop/
+git clone https://github.com/MarcoMruz/agentloop-acp.git
+cd agentloop-acp
+npm install
+npm run build
 ```
 
-The client has no runtime dependencies beyond Node.js built-ins (`node:net`, `node:events`).
+The compiled entry point is `dist/index.js`. You can also run it during development without building:
 
-## Basic Connection
-
-```ts
-import { AgentLoopClient } from "./agentloop/client.js";
-
-const client = new AgentLoopClient(
-  "~/.local/share/agentloop/agentloop.sock"
-);
-
-await client.connect();
-console.log("Connected to AgentLoop server");
+```bash
+npm run dev
 ```
 
-The `connect()` call resolves once the socket is open. If the server is unreachable it rejects; the client will then attempt to reconnect automatically on subsequent calls.
+<Aside type="note">
+  `npm run dev` uses `tsx` to run TypeScript directly. Use it for testing; use `npm run build` for the binary you point Zed at.
+</Aside>
 
 ## Configuration
 
-`AgentLoopClient` takes a single constructor argument — the socket path. Two constants control timing behaviour and can be changed by editing the source:
+### Config File
 
-| Constant | Default | Purpose |
+`agentloop-acp` reads server settings from `~/.config/agentloop/agentloop.yaml`:
+
+```yaml
+server:
+  socket_path: ~/.local/share/agentloop/agentloop.sock
+```
+
+The `socket_path` value expands `~/` automatically. If the file is absent or the key is missing, the default socket path is used.
+
+| Setting | Default | Description |
 |---|---|---|
-| `REQUEST_TIMEOUT_MS` | `30_000` | Milliseconds before a pending request is rejected |
-| `RECONNECT_BASE_MS` | `1_000` | Initial reconnect delay |
-| `RECONNECT_MAX_MS` | `30_000` | Maximum reconnect delay (exponential backoff cap) |
+| `server.socket_path` | `~/.local/share/agentloop/agentloop.sock` | Path to the AgentLoop Unix socket |
 
-For most deployments the defaults are fine. Increase `REQUEST_TIMEOUT_MS` if you run long-latency first responses.
+The request timeout (`30 000 ms`) is currently compile-time only and cannot be overridden via config.
 
-## Health Check
+### CLI Override
 
-```ts
-const health = await client.healthCheck();
-// { status: "ok", activeSessions: 2 }
-console.log(`Server status: ${health.status}, sessions: ${health.activeSessions}`);
+To point the bridge at a non-default socket without editing the config file:
+
+```bash
+node dist/index.js --socket-path /tmp/agentloop-dev.sock
 ```
 
-## Starting a Task
+This overrides the config file value.
 
-```ts
-const result = await client.startTask(
-  "marco",           // userId — used for memory and session routing
-  "fix the failing tests in internal/bridge",
-  "/home/marco/dev/agentloop",  // optional workDir
-  "cli"              // optional source label
-);
+## Configuring Zed IDE
 
-console.log(`Session started: ${result.sessionId}`);
+`agentloop-acp` exposes itself as an ACP agent via stdin/stdout. Register it in your Zed settings (`~/.config/zed/settings.json`):
+
+```json
+{
+  "assistant": {
+    "default_model": {
+      "provider": "agentloop",
+      "model": "agentloop"
+    }
+  },
+  "language_models": {
+    "agentloop": {
+      "type": "acp",
+      "command": "node",
+      "args": ["/absolute/path/to/agentloop-acp/dist/index.js"],
+      "name": "AgentLoop",
+      "provider": "agentloop"
+    }
+  }
+}
 ```
 
-`startTask` returns `{ sessionId, status }`. The session is immediately running on the server; events arrive via the EventEmitter.
+Replace `/absolute/path/to/agentloop-acp/dist/index.js` with the actual path on your system.
 
-## Listening for Events
+To use a custom socket path in the Zed configuration:
 
-```ts
-client.on("event.text", (params) => {
-  process.stdout.write(params.content);
-});
-
-client.on("event.tool_use", (params) => {
-  console.log(`\n⚙  ${params.toolName}`);
-});
-
-client.on("event.done", (params) => {
-  console.log(`\nDone — ${params.stats.toolCalls} tool calls, ${params.stats.duration}`);
-});
-
-client.on("event.error", (params) => {
-  console.error(`\nError: ${params.message}`);
-});
+```json
+"args": ["/path/to/dist/index.js", "--socket-path", "/tmp/agentloop-dev.sock"]
 ```
 
-Events are scoped to `sessionId` in the params — filter when managing multiple concurrent sessions.
-
-## Steering and Aborting
-
-```ts
-// Redirect the agent mid-task
-await client.steerTask(sessionId, "focus only on the bridge package tests");
-
-// Stop the task immediately
-await client.abortTask(sessionId);
-```
-
-## HITL Responses
-
-When the server needs approval, it emits `event.hitl_request`. Send the user's decision back:
-
-```ts
-client.on("event.hitl_request", async (params) => {
-  // Show the user a prompt — this example auto-approves
-  const decision = await askUser(params.details, params.options);
-  await client.respondHITL(params.sessionId, params.requestId, decision);
-});
-```
-
-`decision` must be one of the strings in `params.options` (typically `"approve"`, `"deny"`, or `"abort"`).
-
-## Session Listing
-
-```ts
-// All sessions for a user
-const sessions = await client.listSessions("marco");
-
-// Only running sessions
-const running = await client.listSessions(undefined, "running");
-```
-
-## Disconnecting
-
-```ts
-await client.disconnect();
-```
-
-This cancels the reconnect timer, rejects all pending requests, and destroys the socket.
-
-<Aside type="note">
-  **Socket path expansion**: Node's `createConnection` does not expand `~`. Expand the home directory yourself before passing the path: `socketPath.replace("~", os.homedir())`.
+<Aside type="caution">
+  Zed launches the ACP process with its working directory set to the project root. All relative file paths in prompts are resolved from there.
 </Aside>
+
+## Session Persistence
+
+Conversation history is persisted per ACP session to `~/.local/share/agentloop/acp-sessions/`. Zed can resume a session by passing the same `sessionId` in a `load_session` request. Session files are plain JSON and can be inspected or deleted manually.
+
+## Logging
+
+The bridge writes structured logs to `~/.local/share/agentloop/logs/`. All `console.*` output is redirected to `stderr` to keep `stdout` clean for ACP protocol traffic.
+
+```bash
+# Tail logs while using Zed
+tail -f ~/.local/share/agentloop/logs/*.log
+```
+
+Set `NODE_ENV=development` to enable `debug`-level log output and console logging:
+
+```bash
+NODE_ENV=development node dist/index.js
+```
+
+## Verifying the Setup
+
+After configuring Zed, open the Assistant panel. The ACP handshake is automatic. Check the logs for the startup message:
+
+```
+AgentLoop ACP Bridge started successfully
+```
+
+And for each user turn:
+
+```
+[ACP] Prompt request received
+[AgentLoop] Connected to AgentLoop server
+[AgentLoop] Task started: sess-xxxxxxxx
+```
+
+If the connection to the Go server fails you will see a `Connect failed` error in the Zed Assistant panel and in the logs.
