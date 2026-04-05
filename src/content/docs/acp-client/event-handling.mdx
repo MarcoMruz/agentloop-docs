@@ -1,238 +1,250 @@
 ---
 title: Event Handling
-description: Working with real-time events from the AgentLoop server in TypeScript applications.
+description: How agentloop-acp processes real-time events from the AgentLoop server and surfaces them in Zed IDE.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-## Event System Overview
+## Event Flow Overview
 
-`AgentLoopClient` extends Node.js `EventEmitter`. The server pushes newline-delimited JSON notifications; the client parses each line and re-emits it by method name. No polling required.
+`AgentLoopClient` extends Node.js `EventEmitter`. The Go server pushes newline-delimited JSON notifications over the Unix socket; the client parses each line and emits an `AgentEvent` on the `"event"` channel. `AgentLoopAgent` subscribes to this channel and translates each event into the corresponding ACP call on the Zed connection.
 
 ```mermaid
 sequenceDiagram
-    participant App as Your App
+    participant Zed as Zed IDE
+    participant Agent as AgentLoopAgent
     participant Client as AgentLoopClient
     participant Server as AgentLoop Server
 
-    App->>Client: startTask(userId, text)
+    Zed->>Agent: prompt(sessionId, text)
+    Agent->>Client: connect()
+    Agent->>Client: startTask(userId, fullPrompt, cwd)
     Client->>Server: task.start (JSON-RPC)
     Server-->>Client: { sessionId }
-    Client-->>App: Promise<TaskStartResult>
 
     loop Agent execution
         Server-->>Client: event.text
-        Client-->>App: emit("event.text", params)
+        Client-->>Agent: emit("event", {type:"text",...})
+        Agent->>Zed: sessionUpdate agent_message_chunk
 
         Server-->>Client: event.tool_use
-        Client-->>App: emit("event.tool_use", params)
+        Client-->>Agent: emit("event", {type:"tool_use",...})
+        Agent->>Zed: sessionUpdate tool_call (pending)
+
+        Server-->>Client: event.tool_result
+        Client-->>Agent: emit("event", {type:"tool_result",...})
+        Agent->>Zed: sessionUpdate tool_call_update (completed)
 
         Server-->>Client: event.hitl_request
-        Client-->>App: emit("event.hitl_request", params)
-        App->>Client: respondHITL(sessionId, requestId, decision)
+        Client-->>Agent: emit("event", {type:"hitl_request",...})
+        Agent->>Zed: requestPermission (blocks)
+        Zed-->>Agent: permission response
+        Agent->>Client: respondHitl(sessionId, requestId, decision)
         Client->>Server: hitl.respond (JSON-RPC)
     end
 
     Server-->>Client: event.done
-    Client-->>App: emit("event.done", params)
+    Client-->>Agent: emit("event", {type:"done",...})
+    Agent->>Client: close()
+    Agent->>Zed: { stopReason: "end_turn" }
 ```
 
-## Event Types
+## AgentEvent Type
 
-### Text (`event.text`)
-
-Streaming text chunks from the agent. Arrives incrementally — concatenate for the full response.
+All events share the `AgentEvent` interface. The `type` field is the discriminator:
 
 ```ts
-import type { TextEventParams } from "./agentloop/types.js";
+import type { AgentEvent } from "./agentloop-client.js";
 
-client.on("event.text", (params: TextEventParams) => {
-  process.stdout.write(params.content);
-});
-```
-
-### Tool Use (`event.tool_use` / `event.tool_result`)
-
-```ts
-import type { ToolUseEventParams, ToolResultEventParams } from "./agentloop/types.js";
-
-client.on("event.tool_use", (params: ToolUseEventParams) => {
-  console.log(`⚙  ${params.toolName}`);
-});
-
-client.on("event.tool_result", (params: ToolResultEventParams) => {
-  if (!params.success) {
-    console.warn(`Tool ${params.toolName} failed: ${params.output}`);
+client.on("event", (event: AgentEvent) => {
+  switch (event.type) {
+    case "text":          // event.content
+    case "tool_use":      // event.toolName, event.input
+    case "tool_result":   // event.toolName, event.output, event.success
+    case "hitl_request":  // event.requestId, event.toolName, event.details, event.options, event.riskLevel, ...
+    case "hitl_auto_approved": // event.requestId, event.toolName, event.riskLevel, event.rule
+    case "done":          // event.finalOutput, event.stats
+    case "error":         // event.message
+    case "session_saved": // (sessionId only)
   }
 });
 ```
 
-### HITL Request (`event.hitl_request`)
+All events carry `event.sessionId` — the AgentLoop server session ID.
+
+## Event Types
+
+### Text (`type: "text"`)
+
+Streaming text chunks from the agent. Arrive incrementally — concatenate for the full response.
+
+`AgentLoopAgent` forwards each chunk to Zed via `sessionUpdate` with `agent_message_chunk`:
 
 ```ts
-import type { HITLRequestEventParams } from "./agentloop/types.js";
-
-client.on("event.hitl_request", async (params: HITLRequestEventParams) => {
-  console.log(`❓ ${params.toolName}: ${params.details}`);
-  console.log(`   Risk: ${params.riskLevel ?? "unknown"}`);
-  console.log(`   Options: ${params.options.join(" / ")}`);
-
-  const decision = await promptUser(params.options);  // your UI
-  await client.respondHITL(params.sessionId, params.requestId, decision);
-});
-```
-
-`HITLRequestEventParams` has enriched optional fields populated when the Go server's security layer fires:
-
-| Field | Type | Description |
-|---|---|---|
-| `toolName` | `string` | Human-readable tool label |
-| `details` | `string` | Free-text description |
-| `options` | `string[]` | Valid response strings |
-| `command` | `string?` | Raw command / path / URL |
-| `riskLevel` | `"low" \| "medium" \| "high"` | Severity hint |
-| `filePath` | `string?` | Specific file or directory affected |
-| `whitelistedPaths` | `string[]?` | Paths that are allowed (for context) |
-| `structuredInput` | `Record<string, unknown>?` | Parsed tool input |
-| `reason` | `string?` | One-line human explanation |
-
-### Done (`event.done`)
-
-```ts
-import type { DoneEventParams } from "./agentloop/types.js";
-
-client.on("event.done", (params: DoneEventParams) => {
-  console.log(`\nCompleted: ${params.stats.toolCalls} tools, ${params.stats.duration}`);
-  console.log(params.output);
-});
-```
-
-### Error (`event.error`)
-
-```ts
-import type { ErrorEventParams } from "./agentloop/types.js";
-
-client.on("event.error", (params: ErrorEventParams) => {
-  console.error(`Session ${params.sessionId} failed: ${params.message}`);
-});
-```
-
-## Patterns
-
-### Single-Session Collector
-
-Wait for a task to finish and return the full output:
-
-```ts
-async function runTask(
-  client: AgentLoopClient,
-  userId: string,
-  text: string,
-  workDir?: string,
-): Promise<string> {
-  const { sessionId } = await client.startTask(userId, text, workDir, "app");
-
-  return new Promise((resolve, reject) => {
-    let output = "";
-
-    const onText = (p: TextEventParams) => {
-      if (p.sessionId === sessionId) output += p.content;
-    };
-
-    const onDone = (p: DoneEventParams) => {
-      if (p.sessionId !== sessionId) return;
-      cleanup();
-      resolve(output);
-    };
-
-    const onError = (p: ErrorEventParams) => {
-      if (p.sessionId !== sessionId) return;
-      cleanup();
-      reject(new Error(p.message));
-    };
-
-    const cleanup = () => {
-      client.off("event.text", onText);
-      client.off("event.done", onDone);
-      client.off("event.error", onError);
-    };
-
-    client.on("event.text", onText);
-    client.on("event.done", onDone);
-    client.on("event.error", onError);
+case "text": {
+  assistantResponse += event.content || "";
+  await this.connection.sessionUpdate({
+    sessionId,
+    update: {
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: event.content || "" },
+    },
   });
 }
 ```
 
-### Multi-Session Fan-Out
+### Tool Use & Result (`type: "tool_use"` / `type: "tool_result"`)
 
-Track multiple concurrent sessions with a `Map`:
+Tool invocations are displayed in Zed's tool call UI. `tool_use` opens a pending call; `tool_result` closes it with a `completed` or `failed` status.
 
 ```ts
-const sessions = new Map<string, { text: string }>();
+case "tool_use": {
+  const title = toolRichTitle(event.toolName!, event.input);
+  const kind = toolNameToKind(event.toolName!) as acp.ToolKind;
+  await this.connection.sessionUpdate({
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call",
+      toolCallId: tcId,
+      title,
+      kind,
+      status: "pending",
+    },
+  });
+}
 
-client.on("event.text", (p) => {
-  const s = sessions.get(p.sessionId);
-  if (s) s.text += p.content;
-});
+case "tool_result": {
+  const display = extraContent ?? event.output ?? "";
+  await this.connection.sessionUpdate({
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call_update",
+      toolCallId: tcId,
+      status: event.success ? "completed" : "failed",
+      content: [{ type: "content", content: { type: "text", text: display } }],
+    },
+  });
+}
+```
 
-client.on("event.done", (p) => {
-  const s = sessions.get(p.sessionId);
-  if (s) {
-    console.log(`Session ${p.sessionId} done: ${s.text.slice(0, 80)}…`);
-    sessions.delete(p.sessionId);
+For `edit` and `write` tools, `AgentLoopAgent` pre-computes a unified diff or file preview to show as the tool result content rather than the raw output string.
+
+### HITL Request (`type: "hitl_request"`)
+
+When the Go server requires user approval, it emits `hitl_request`. The bridge calls `connection.requestPermission()` which blocks until Zed shows the user a permission dialog and they respond.
+
+```ts
+case "hitl_request": {
+  const acpOptions = (event.options || []).map((opt, i) => ({
+    optionId: `opt-${i}`,
+    name: opt,
+    kind: classifyHitlOption(opt) as acp.PermissionOptionKind,
+  }));
+
+  const response = await this.connection.requestPermission({
+    sessionId,
+    toolCall: {
+      toolCallId: tcId,
+      toolName: event.toolName!,
+      title: event.details!,
+      rawInput: event.details!,
+      kind: toolNameToKind(event.toolName!) as acp.ToolKind,
+    },
+    options: acpOptions,
+  });
+
+  const decision = hitlDecisionFromResponse(response.outcome, event.options || []);
+  await client.respondHitl(event.sessionId, event.requestId!, decision);
+}
+```
+
+`classifyHitlOption` maps AgentLoop option strings to ACP `PermissionOptionKind`:
+
+| Option string contains | ACP kind |
+|---|---|
+| `"abort"` | `"reject_always"` |
+| `"approve"` / `"allow"` / `"yes"` | `"allow_once"` |
+| _(anything else)_ | `"reject_once"` |
+
+The `hitl_request` event carries enriched optional fields from the Go security layer:
+
+| Field | Type | Description |
+|---|---|---|
+| `requestId` | `string` | Unique ID to echo back in `respondHitl` |
+| `toolName` | `string` | Human-readable tool label |
+| `details` | `string` | Free-text description of the action |
+| `options` | `string[]` | Valid response strings |
+| `command` | `string?` | Raw command, path, or URL |
+| `workDir` | `string?` | Working directory for the action |
+| `rule` | `string?` | Policy rule that triggered the request |
+| `toolCategory` | `string?` | `"file"`, `"bash"`, `"network"`, etc. |
+| `filePath` | `string?` | Specific file or directory affected |
+| `riskLevel` | `string?` | `"low"`, `"medium"`, or `"high"` |
+| `reason` | `string?` | One-line human explanation |
+
+### HITL Auto-Approved (`type: "hitl_auto_approved"`)
+
+When the Go server's policy automatically approves a tool invocation, it emits `hitl_auto_approved`. The bridge shows it as a completed tool call in Zed without blocking for user input.
+
+```ts
+case "hitl_auto_approved": {
+  await this.connection.sessionUpdate({
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call",
+      toolCallId: tcId,
+      title: `Auto-approved [${event.riskLevel}]: ${event.toolName}`,
+      kind: toolNameToKind(event.toolName!) as acp.ToolKind,
+      status: "completed",
+    },
+  });
+}
+```
+
+### Done (`type: "done"`)
+
+Signals task completion. The bridge resolves the in-flight promise, stores the assistant response in session history, persists the session to disk, and returns `{ stopReason: "end_turn" }` to Zed.
+
+```ts
+case "done": {
+  // event.finalOutput — full agent output
+  // event.stats.duration_ms, event.stats.tool_calls,
+  //   event.stats.tokens_used, event.stats.hitl_requests
+  resolve();
+}
+```
+
+### Error (`type: "error"`)
+
+Signals task failure. The bridge rejects the in-flight promise, pops the user message from history (so the failed turn isn't persisted), and lets the error surface in Zed.
+
+```ts
+case "error": {
+  // Undo the user turn that triggered the failed task
+  if (state.history[state.history.length - 1]?.role === "user") {
+    state.history.pop();
   }
-});
-
-// Start two tasks
-const [a, b] = await Promise.all([
-  client.startTask("marco", "task A", "/workdir-a"),
-  client.startTask("marco", "task B", "/workdir-b"),
-]);
-sessions.set(a.sessionId, { text: "" });
-sessions.set(b.sessionId, { text: "" });
+  reject(new Error(event.message || "Task error"));
+}
 ```
 
-### Auto-HITL with Allowlist
+### Session Saved (`type: "session_saved"`)
 
-Auto-approve safe tools, prompt for anything else:
+Informational event emitted by the server when it persists the session to its vault. The bridge does not act on this event; session history is persisted separately by the bridge itself after each `done`.
 
-```ts
-const SAFE_TOOLS = new Set(["read", "bash", "grep", "find"]);
+## Cancellation
 
-client.on("event.hitl_request", async (p) => {
-  const decision = SAFE_TOOLS.has(p.toolName) ? "approve" : await askUser(p);
-  await client.respondHITL(p.sessionId, p.requestId, decision);
-});
-```
-
-### Reconnect and Re-submit
-
-Tasks in flight when the socket drops are lost on the server side. Re-submit after reconnect if needed:
+Zed sends a `cancel` notification when the user stops a running task. `AgentLoopAgent.cancel()` calls `client.abortTask(alSessionId)` on the in-flight client, which sends `task.abort` to the server:
 
 ```ts
-client.on("reconnected", async () => {
-  console.log("Reconnected — checking active sessions");
-  const active = await client.listSessions("marco", "running");
-  if (active.length === 0) {
-    // Re-submit the task
-    await client.startTask("marco", pendingTask);
+async cancel(params: acp.CancelNotification): Promise<void> {
+  const state = this.sessions.get(params.sessionId);
+  if (state?.agentLoopSessionId && state.activeClient) {
+    await state.activeClient.abortTask(state.agentLoopSessionId);
   }
-});
-```
-
-## All Events on One Listener
-
-Use the `"event"` channel to receive all notifications as `RPCNotification` objects:
-
-```ts
-import type { RPCNotification } from "./agentloop/types.js";
-
-client.on("event", (notification: RPCNotification) => {
-  console.log(notification.method, notification.params);
-});
+}
 ```
 
 <Aside type="tip">
-  **Session filtering**: Always check `params.sessionId` before acting on an event. Multiple sessions may run concurrently, and the client receives events for all of them on the same socket.
+  `event.sessionId` in AgentEvent refers to the **AgentLoop server session ID** (`sess-xxxxxxxx`), not the ACP session ID. They are different identifiers maintained by different layers.
 </Aside>
